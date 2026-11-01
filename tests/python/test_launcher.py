@@ -18,7 +18,7 @@ def check(cond, msg):
     fails += 0 if cond else 1
 
 root = Path(tempfile.mkdtemp(prefix="launcher_"))
-here = root / "bin" / "x64" / "plugins" / "cyber_engine_tweaks" / "mods" / "spotifyFM" / "companion"
+here = root / "bin" / "x64" / "plugins" / "cyber_engine_tweaks" / "mods" / "spotipunkFM" / "companion"
 here.mkdir(parents=True)
 
 # --- game_command: what Steam's %command% turns into
@@ -29,7 +29,7 @@ check(sw.game_command([], here) == [exe], "no %command% substitution: starts Cyb
 check(sw.game_command(["-skipStartScreen"], here) == [exe, "-skipStartScreen"], "args only: exe added in front")
 
 # --- fake companion: records its argv, logs 'ready' after 1 s, lingers a little
-(here / "spotify_fm.py").write_text(f"""
+(here / "spotipunk_fm.py").write_text(f"""
 import sys, time, json
 open({str(root / "companion_argv.json")!r}, "w").write(json.dumps(sys.argv[1:]))
 time.sleep(1.0)
@@ -71,7 +71,7 @@ rc = sw.main([sys.executable, str(game)], here=here, python=root)  # a folder: P
 check(rc == 7 and (root / "game_argv.json").exists(), "companion launch error: game still starts")
 
 (root / "game_argv.json").unlink()
-(here / "spotify_fm.py").write_text("import time; time.sleep(5)\n")  # never says ready
+(here / "spotipunk_fm.py").write_text("import time; time.sleep(5)\n")  # never says ready
 t0 = time.time()
 sw.WAIT_FOR_PLAYER = 1
 rc = sw.main([sys.executable, str(game)], here=here, python=sys.executable)

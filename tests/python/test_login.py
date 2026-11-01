@@ -1,6 +1,6 @@
 import http.server, importlib.util, json, sys, tempfile, threading, urllib.parse, urllib.request, hashlib, base64
 from pathlib import Path
-spec = importlib.util.spec_from_file_location("spotify_fm", sys.argv[1]); fm = importlib.util.module_from_spec(spec); spec.loader.exec_module(fm)
+spec = importlib.util.spec_from_file_location("spotipunk_fm", sys.argv[1]); fm = importlib.util.module_from_spec(spec); spec.loader.exec_module(fm)
 got = {}
 class Acc(http.server.BaseHTTPRequestHandler):
     def log_message(self,*a): pass

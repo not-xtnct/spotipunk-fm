@@ -1,12 +1,12 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Spotify FM - start with the game
+title SpotiPunk FM - start with the game
 if not exist ".venv\Scripts\pythonw.exe" goto notready
 set "LINE="%~dp0.venv\Scripts\pythonw.exe" "%~dp0start_with_game.pyw" %%command%%"
 echo(%LINE%| clip
 echo.
-echo  Spotify FM can now start by itself whenever you play from Steam.
+echo  SpotiPunk FM can now start by itself whenever you play from Steam.
 echo.
 echo  The line below is already copied. In Steam:
 echo    1. Right-click Cyberpunk 2077, then Properties, then General

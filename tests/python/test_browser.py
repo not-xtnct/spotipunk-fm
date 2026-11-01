@@ -4,7 +4,7 @@ import http.server, importlib.util, json, os, sys, tempfile, threading, time, ur
 from pathlib import Path
 
 COMPANION, CHROME = Path(sys.argv[1]), sys.argv[2]
-spec = importlib.util.spec_from_file_location("spotify_fm", COMPANION)
+spec = importlib.util.spec_from_file_location("spotipunk_fm", COMPANION)
 fm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fm)
 
@@ -87,7 +87,7 @@ tmp = Path(tempfile.mkdtemp())
 fm.LOG_PATH = tmp / "log"; fm.CONFIG_PATH = tmp / "config.json"; fm.PLAYER_PROFILE_DIR = tmp / "profile"
 wrapper = tmp / "browser.sh"
 wrapper.write_text("#!/bin/sh\nexec %s --headless=new --no-sandbox \"$@\"\n" % CHROME); wrapper.chmod(0o755)
-mod_dir = tmp / "spotifyFM"; mod_dir.mkdir(); (mod_dir / "init.lua").write_text("--")
+mod_dir = tmp / "spotipunkFM"; mod_dir.mkdir(); (mod_dir / "init.lua").write_text("--")
 tokens = tmp / "tokens.json"
 tokens.write_text(json.dumps({"access_token": "x", "expires_at": 0, "refresh_token": "R", "client_id": "c" * 32, "scope": " ".join(fm.SCOPES)}))
 

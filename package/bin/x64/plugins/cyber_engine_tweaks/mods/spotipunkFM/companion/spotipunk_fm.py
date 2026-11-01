@@ -1,10 +1,10 @@
 """
-Spotify FM companion app.
+SpotiPunk FM companion app.
 
-Runs next to Cyberpunk 2077 and connects the "Spotify FM" radio station
-(RadioExt + the spotifyFM CET mod) to your Spotify account:
+Runs next to Cyberpunk 2077 and connects the "SpotiPunk FM" radio station
+(RadioExt + the spotipunkFM CET mod) to your Spotify account:
 
-  * tune in to Spotify FM in game  -> your chosen playlist plays on this PC
+  * tune in to SpotiPunk FM in game  -> your chosen playlist plays on this PC
   * cutscene / locked dialogue     -> Spotify pauses, then resumes
   * walk-and-talk dialogue, calls  -> Spotify volume is lowered, then restored
   * switch station / leave the car -> Spotify pauses
@@ -21,10 +21,10 @@ profile), so the Spotify desktop app is not needed. Set "player": "app" in
 config.json to control the Spotify app instead.
 
 Usage:
-    python spotify_fm.py                 run the bridge (first run walks you through setup)
-    python spotify_fm.py --setup         redo the Spotify setup and playlist choice
-    python spotify_fm.py --add-folder "D:\\Music\\Synthwave" --name "Synthwave FM" --fm 89.3
-    python spotify_fm.py --sync          only sync local-music stations, then exit
+    python spotipunk_fm.py                 run the bridge (first run walks you through setup)
+    python spotipunk_fm.py --setup         redo the Spotify setup and playlist choice
+    python spotipunk_fm.py --add-folder "D:\\Music\\Synthwave" --name "Synthwave FM" --fm 89.3
+    python spotipunk_fm.py --sync          only sync local-music stations, then exit
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.1.9"
+VERSION = "1.2.0"
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
@@ -75,8 +75,8 @@ SCOPES = [
     "user-read-private",
 ]
 
-PLAYER_NAME = "Spotify FM (Cyberpunk 2077)"
-PLAYER_TITLE = "Spotify FM Player"
+PLAYER_NAME = "SpotiPunk FM (Cyberpunk 2077)"
+PLAYER_TITLE = "SpotiPunk FM Player"
 
 LIKED_SONGS = "liked"  # pseudo playlist id for the user's Liked Songs
 
@@ -158,7 +158,7 @@ def save_config(cfg: dict) -> None:
 
 
 def find_mod_dir(cfg: dict) -> Path | None:
-    """The spotifyFM CET mod folder, where state.json and now_playing.json live."""
+    """The spotipunkFM CET mod folder, where state.json and now_playing.json live."""
     if cfg.get("mod_dir"):
         p = Path(cfg["mod_dir"]).expanduser()
         return p if (p / "init.lua").exists() else None
@@ -232,8 +232,8 @@ class Spotify:
                 result["state"] = (q.get("state") or [None])[0]
                 result["error"] = (q.get("error") or [None])[0]
                 ok = result["code"] and result["state"] == state
-                body = ("<h2>Spotify FM is connected.</h2><p>You can close this tab and go back to the game.</p>"
-                        if ok else "<h2>Login failed.</h2><p>Go back to the Spotify FM window for details.</p>")
+                body = ("<h2>SpotiPunk FM is connected.</h2><p>You can close this tab and go back to the game.</p>"
+                        if ok else "<h2>Login failed.</h2><p>Go back to the SpotiPunk FM window for details.</p>")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -494,7 +494,7 @@ PLAYER_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>__TITLE__</title>
 <style>body{font:14px system-ui,sans-serif;background:#111;color:#eee;margin:16px}#s{color:#9f9}</style>
 </head><body>
-<b>Spotify FM player</b> - keep this running while you play. It is normally hidden.
+<b>SpotiPunk FM player</b> - keep this running while you play. It is normally hidden.
 <p id="s">starting...</p>
 <button id="b" style="font-size:16px;padding:8px 16px">Start sound</button>
 <script>
@@ -704,7 +704,7 @@ def notify_user(text: str) -> None:
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, text, "Spotify FM", 0x40)  # MB_ICONINFORMATION
+            ctypes.windll.user32.MessageBoxW(None, text, "SpotiPunk FM", 0x40)  # MB_ICONINFORMATION
         except Exception:
             pass
 
@@ -895,7 +895,7 @@ class BrowserPlayer:
         try:
             self.server = ExclusiveServer(("127.0.0.1", self.port), Handler)
         except OSError as e:
-            raise SystemExit(f"Port {self.port} is busy ({e}). Is another Spotify FM companion window open?")
+            raise SystemExit(f"Port {self.port} is busy ({e}). Is another SpotiPunk FM companion window open?")
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
@@ -1120,7 +1120,7 @@ def sync_local_station(radios_dir: Path, station: dict) -> None:
         display = f"{fm:g} {name}" if not name[:1].isdigit() else name
         write_json_atomic(meta_path, station_metadata(display, fm))
 
-    manifest_path = dest / ".spotifyfm_sync.json"
+    manifest_path = dest / ".spotipunkfm_sync.json"
     manifest = read_json(manifest_path, {}) or {}
 
     wanted: dict[str, Path] = {}
@@ -1177,7 +1177,7 @@ def sync_all_local(cfg: dict, mod_dir: Path | None) -> None:
     if not stations:
         return
     if not mod_dir:
-        log("Can't sync local stations: spotifyFM mod folder not found (set mod_dir in config.json).")
+        log("Can't sync local stations: spotipunkFM mod folder not found (set mod_dir in config.json).")
         return
     radios_dir = mod_dir.parent / "radioExt" / "radios"
     if not radios_dir.is_dir():
@@ -1677,14 +1677,14 @@ class Bridge:
     def run(self, stop_check=None) -> None:
         """Main loop. stop_check (background mode): called every tick; returning
         True ends the loop cleanly (pause, close the player)."""
-        log(f"Spotify FM companion {VERSION} running. Watching {self.state_path}")
+        log(f"SpotiPunk FM companion {VERSION} running. Watching {self.state_path}")
         if stop_check is None:
             log("Leave this window open while you play. Press Ctrl+C to quit.")
         if self.player:
             log("Player: built-in (hidden). The Spotify app is not needed.")
             try:
                 self.player.start()
-                print("A small 'Spotify FM Player' window may flash for a second; it hides itself.")
+                print("A small 'SpotiPunk FM Player' window may flash for a second; it hides itself.")
             except RuntimeError as e:
                 self.set_error(str(e))
         elif self.mixer.ok:
@@ -1728,7 +1728,7 @@ SETUP_HELP = """
 One-time Spotify setup (about 3 minutes)
 ----------------------------------------
 1. Go to https://developer.spotify.com/dashboard and log in with your Spotify account.
-2. Click "Create app". Any name and description is fine (e.g. "Spotify FM").
+2. Click "Create app". Any name and description is fine (e.g. "SpotiPunk FM").
    Redirect URI:  http://127.0.0.1:{port}/callback
    Under "Which API/SDKs are you planning to use?" tick "Web API" and "Web Playback SDK". Save.
 3. Open the app's Settings, copy the "Client ID", and paste it below.
@@ -1738,7 +1738,7 @@ One-time Spotify setup (about 3 minutes)
 
 def choose_playlist(cfg: dict, sp: Spotify) -> None:
     playlists = sp.playlists()
-    print("\nWhich playlist should Spotify FM play?")
+    print("\nWhich playlist should SpotiPunk FM play?")
     print("   0. Liked Songs")
     for i, p in enumerate(playlists, 1):
         total = f" ({p['total']} tracks)" if isinstance(p.get("total"), int) else ""
@@ -1754,7 +1754,7 @@ def choose_playlist(cfg: dict, sp: Spotify) -> None:
     else:
         cfg["playlist_uri"], cfg["playlist_name"] = playlists[n - 1]["uri"], playlists[n - 1]["name"]
     save_config(cfg)
-    print(f"Spotify FM will play: {cfg['playlist_name']}. You can change it in game from the CET overlay.")
+    print(f"SpotiPunk FM will play: {cfg['playlist_name']}. You can change it in game from the CET overlay.")
 
 
 def setup(cfg: dict, force: bool) -> Spotify:
@@ -1772,7 +1772,7 @@ def setup(cfg: dict, force: bool) -> Spotify:
     if force or not sp.has_login():
         sp.login()
     elif not sp.has_scopes(SCOPES):
-        print("\nSpotify FM can now play music by itself, without the Spotify app.\n"
+        print("\nSpotiPunk FM can now play music by itself, without the Spotify app.\n"
               "Spotify needs to approve that once: your browser will open, click Agree.\n"
               "(If Spotify shows an error, open your app at developer.spotify.com/dashboard,\n"
               " go to Settings > Edit, tick \"Web Playback SDK\" under APIs used, save, and run this again.)\n")
@@ -1852,7 +1852,7 @@ def sound_test(cfg: dict, sp: Spotify) -> int:
             bridge.apply("play", 0.3)
             time.sleep(10)
             if not ask("Do you hear music now?"):
-                print("\nClick the 'Start sound' button in the Spotify FM Player window, wait 5 seconds.")
+                print("\nClick the 'Start sound' button in the SpotiPunk FM Player window, wait 5 seconds.")
                 input("Press Enter here after clicking... ")
                 time.sleep(5)
                 ask("Do you hear music now?")
@@ -1867,7 +1867,7 @@ def sound_test(cfg: dict, sp: Spotify) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Spotify FM companion for Cyberpunk 2077")
+    ap = argparse.ArgumentParser(description="SpotiPunk FM companion for Cyberpunk 2077")
     ap.add_argument("--setup", action="store_true", help="redo Spotify login and playlist choice")
     ap.add_argument("--sync", action="store_true", help="sync local-music stations and exit")
     ap.add_argument("--add-folder", metavar="PATH", help="add a folder of music as a new radio station")
@@ -1885,8 +1885,8 @@ def main(argv=None) -> int:
 
     mod_dir = find_mod_dir(cfg)
     if not mod_dir:
-        print("Couldn't find the spotifyFM mod folder.\nIt is normally the folder above this one:\n"
-              "  Cyberpunk 2077\\bin\\x64\\plugins\\cyber_engine_tweaks\\mods\\spotifyFM")
+        print("Couldn't find the spotipunkFM mod folder.\nIt is normally the folder above this one:\n"
+              "  Cyberpunk 2077\\bin\\x64\\plugins\\cyber_engine_tweaks\\mods\\spotipunkFM")
         entered = input("Paste the full path to that folder: ").strip().strip('"')
         if not (Path(entered) / "init.lua").exists():
             print("init.lua isn't in that folder. Check the path and try again.")
@@ -1914,7 +1914,7 @@ def main(argv=None) -> int:
         log(f"Companion {VERSION} started in the background with the game.")
         why = needs_interactive_setup(cfg)
         if why:
-            notify_user(f"Spotify FM can't start by itself yet ({why}).\n\n"
+            notify_user(f"SpotiPunk FM can't start by itself yet ({why}).\n\n"
                         "Double-click run_companion.bat once, finish the setup, then close it. "
                         "After that it starts with the game again.")
             return 2
@@ -1936,7 +1936,7 @@ def main(argv=None) -> int:
                 player = BrowserPlayer(cfg, sp, int(cfg["redirect_port"]))
             except SystemExit as e:
                 if args.background:  # a companion window is already open: it does the job
-                    log("Another Spotify FM companion is already running; this one exits.")
+                    log("Another SpotiPunk FM companion is already running; this one exits.")
                     return 0
                 raise
             install_close_handler(player.close_now)

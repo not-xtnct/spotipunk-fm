@@ -1,4 +1,4 @@
--- Test harness: runs spotifyFM/init.lua with mocked CET / game globals.
+-- Test harness: runs spotipunkFM/init.lua with mocked CET / game globals.
 local MOD = arg[1]
 local JSON = arg[2]
 json = dofile(JSON)
@@ -31,8 +31,8 @@ package.preload["modules/GameUI"] = function() return gameUI end
 
 local popups = 0
 local station = {
-    path = "Spotify FM", name = "107.7 Spotify FM", channels = { [-1] = false },
-    currentSong = { path = "Spotify FM\\No songs.mp3", length = 0 },
+    path = "SpotiPunk FM", name = "107.7 SpotiPunk FM", channels = { [-1] = false },
+    currentSong = { path = "SpotiPunk FM\\No songs.mp3", length = 0 },
 }
 function station:tryUpdateUI() popups = popups + 1 end
 local radioExtLoaded = false
@@ -139,7 +139,7 @@ end
 -- Load the mod ----------------------------------------------------------------
 dofile(MOD .. "/init.lua")
 check(events.onInit and events.onUpdate and events.onDraw, "events registered")
-check(hotkeys.spotifyfm_next and hotkeys.spotifyfm_previous, "hotkeys registered")
+check(hotkeys.spotipunkfm_next and hotkeys.spotipunkfm_previous, "hotkeys registered")
 events.onInit()
 
 expect("off", "station not found", "no RadioExt yet")
@@ -200,7 +200,7 @@ local function writeNP(t)
     local f = io.open("now_playing.json", "w"); f:write(json.encode(t)); f:close()
 end
 step(1.5)
-check(station.currentSong.path == "Start the Spotify FM companion app.mp3", "offline label, got " .. station.currentSong.path)
+check(station.currentSong.path == "Start the SpotiPunk FM companion app.mp3", "offline label, got " .. station.currentSong.path)
 local before = popups
 writeNP({ ts = os.time(), track = "Mr. Brightside", artist = "The Killers", is_playing = true,
           playlists = { { name = "Drive", uri = "spotify:playlist:1" } }, selected_uri = "spotify:playlist:1", selected_name = "Drive" })
@@ -214,13 +214,13 @@ step(3)
 check(popups == before + 1, "no repeated popups for the same track")
 writeNP({ ts = os.time() - 60, track = "Old" })
 step(1.5)
-check(station.currentSong.path == "Start the Spotify FM companion app.mp3", "stale companion detected")
+check(station.currentSong.path == "Start the SpotiPunk FM companion app.mp3", "stale companion detected")
 
 -- Commands ------------------------------------------------------------------------
-hotkeys.spotifyfm_next(); step(0.1)
+hotkeys.spotipunkfm_next(); step(0.1)
 local s = readState()
 check(#s.commands == 1 and s.commands[1].action == "next" and s.commands[1].seq == 1, "next command queued")
-for _ = 1, 12 do hotkeys.spotifyfm_previous() end; step(0.1)
+for _ = 1, 12 do hotkeys.spotipunkfm_previous() end; step(0.1)
 s = readState()
 check(#s.commands == 8 and s.commands[8].seq == 13, "command list capped at 8, newest kept")
 check(type(s.session) == "number" and s.hb > 0, "session + heartbeat present")

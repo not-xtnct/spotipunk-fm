@@ -11,7 +11,7 @@ import urllib.parse
 from pathlib import Path
 
 COMPANION = Path(sys.argv[1])
-spec = importlib.util.spec_from_file_location("spotify_fm", COMPANION)
+spec = importlib.util.spec_from_file_location("spotipunk_fm", COMPANION)
 fm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fm)
 
@@ -99,7 +99,7 @@ base = "http://127.0.0.1:%d" % srv.server_address[1]
 
 # ---------------------------------------------------------------- setup
 tmp = Path(tempfile.mkdtemp())
-mod_dir = tmp / "mods" / "spotifyFM"
+mod_dir = tmp / "mods" / "spotipunkFM"
 mod_dir.mkdir(parents=True)
 (mod_dir / "init.lua").write_text("-- stub")
 fm.CONFIG_PATH = tmp / "config.json"
@@ -343,7 +343,7 @@ class StubPlayer:
     @property
     def target(self): return self.targets[-1] if self.targets else None
 
-S["devices"].append({"id": "sdk1", "name": "Spotify FM (Cyberpunk 2077)", "type": "Computer",
+S["devices"].append({"id": "sdk1", "name": "SpotiPunk FM (Cyberpunk 2077)", "type": "Computer",
                      "is_active": False, "is_restricted": False})
 stub = StubPlayer()
 cfg_b = dict(cfg, player="browser", player_volume=0.8)
@@ -373,7 +373,7 @@ check(near(stub.target, 0.096 * 0.3), "slider moved while ducked keeps ducking (
 game_v("play", 0.12)
 check(near(stub.target, 0.096), "call over: back to game volume, not 0.8 (got %s)" % stub.target)
 game_v("play", 0.0)
-check(near(stub.target, 0.0), "slider at 0 mutes Spotify FM (got %s)" % stub.target)
+check(near(stub.target, 0.0), "slider at 0 mutes SpotiPunk FM (got %s)" % stub.target)
 game_v("off", 0.0, "not tuned")
 n_targets = len(stub.targets)
 game_v("off", 0.5, "not tuned")
@@ -471,7 +471,7 @@ cfg["local_stations"] = [{"name": "My Music FM", "fm": 88.8, "source": str(src)}
 fm.sync_all_local(cfg, mod_dir)
 st = radios / "My Music FM"
 files = sorted(p.name for p in st.iterdir())
-check(files == [".spotifyfm_sync.json", "Album A - 01 Song.flac", "loose.mp3", "metadata.json"], "station folder built: %s" % files)
+check(files == [".spotipunkfm_sync.json", "Album A - 01 Song.flac", "loose.mp3", "metadata.json"], "station folder built: %s" % files)
 check(os.stat(st / "loose.mp3").st_ino == os.stat(src / "loose.mp3").st_ino, "same-drive files are hard links")
 meta = json.loads((st / "metadata.json").read_text())
 check(meta["displayName"] == "88.8 My Music FM" and meta["fm"] == 88.8, "metadata.json written for RadioExt")

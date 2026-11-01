@@ -1,4 +1,4 @@
-"""Spotify FM: start the companion together with the game (Steam launch option).
+"""SpotiPunk FM: start the companion together with the game (Steam launch option).
 
 Steam > Cyberpunk 2077 > Properties > General > Launch options:
 
@@ -6,13 +6,13 @@ Steam > Cyberpunk 2077 > Properties > General > Launch options:
 
 steam_launch_option.bat puts that exact line (with your paths) on the clipboard.
 
-What it does: starts the companion hidden (spotify_fm.py --background), waits up
+What it does: starts the companion hidden (spotipunk_fm.py --background), waits up
 to 10 s for its player to load (it must load before the game goes full screen),
 then starts the game exactly as Steam asked and waits for it. The companion
 exits by itself shortly after the game closes.
 
 The game ALWAYS starts, whatever happens with the companion. This file uses
-only the standard library and never imports spotify_fm.py, so a companion bug
+only the standard library and never imports spotipunk_fm.py, so a companion bug
 can't stop the game from launching. Log: launcher.log in this folder.
 """
 import os
@@ -45,14 +45,14 @@ def game_command(argv, here=HERE):
     passed only arguments (or nothing), start the game exe next to us."""
     if argv and argv[0].lower().endswith(".exe"):
         return list(argv)
-    exe = here.parents[4] / "Cyberpunk2077.exe"  # companion -> spotifyFM -> mods -> cet -> plugins -> x64
+    exe = here.parents[4] / "Cyberpunk2077.exe"  # companion -> spotipunkFM -> mods -> cet -> plugins -> x64
     return [str(exe)] + list(argv)
 
 
 def start_companion(here=HERE, python=None, wait=None):
     wait = WAIT_FOR_PLAYER if wait is None else wait
     python = Path(python) if python else here / ".venv" / "Scripts" / "pythonw.exe"
-    script = here / "spotify_fm.py"
+    script = here / "spotipunk_fm.py"
     if not python.exists() or not script.exists():
         log(f"companion not started: {python if not python.exists() else script} is missing "
             "(double-click run_companion.bat once to set it up)", here)

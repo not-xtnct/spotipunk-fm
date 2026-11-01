@@ -3,7 +3,7 @@
 Starts a child Python in its own console that installs install_close_handler()
 with a cleanup that writes a marker file, then sends that console window
 WM_CLOSE (what clicking X does) and checks the marker. No browser is started.
-usage: python -I test_closehandler.py <spotify_fm.py>"""
+usage: python -I test_closehandler.py <spotipunk_fm.py>"""
 import ctypes, os, subprocess, sys, tempfile, time
 from pathlib import Path
 
@@ -17,7 +17,7 @@ hwnd_file, marker, ready = tmp / "hwnd.txt", tmp / "cleaned.txt", tmp / "ready.t
 child = tmp / "child.py"
 child.write_text(f"""
 import ctypes, importlib.util, sys, time
-spec = importlib.util.spec_from_file_location("spotify_fm", {str(COMPANION)!r})
+spec = importlib.util.spec_from_file_location("spotipunk_fm", {str(COMPANION)!r})
 fm = importlib.util.module_from_spec(spec); spec.loader.exec_module(fm)
 fm.LOG_PATH = __import__("pathlib").Path({str(tmp / "child.log")!r})
 def cleanup():

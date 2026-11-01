@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Spotify FM companion
+title SpotiPunk FM companion
 cd /d "%~dp0"
 
 set "PY="
@@ -29,5 +29,5 @@ if not exist ".venv\Scripts\python.exe" (
     if errorlevel 1 echo Optional package pycaw failed to install; volume fades will use Spotify's own volume instead.
 )
 
-".venv\Scripts\python.exe" spotify_fm.py %*
+".venv\Scripts\python.exe" spotipunk_fm.py %*
 pause

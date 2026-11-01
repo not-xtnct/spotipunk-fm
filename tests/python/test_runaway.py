@@ -3,7 +3,7 @@ import importlib.util, json, subprocess, sys, tempfile, threading, time
 from pathlib import Path
 
 COMPANION, CHROME = Path(sys.argv[1]), sys.argv[2]
-spec = importlib.util.spec_from_file_location("spotify_fm", COMPANION)
+spec = importlib.util.spec_from_file_location("spotipunk_fm", COMPANION)
 fm = importlib.util.module_from_spec(spec); spec.loader.exec_module(fm)
 tmp = Path(tempfile.mkdtemp())
 fm.LOG_PATH = tmp / "log"; fm.PLAYER_PROFILE_DIR = tmp / ".player-profile"

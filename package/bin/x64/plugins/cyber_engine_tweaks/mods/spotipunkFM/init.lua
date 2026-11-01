@@ -1,13 +1,13 @@
 --------------------------------------------------------------------------------
--- Spotify FM — in-game bridge between RadioExt and your Spotify account
+-- SpotiPunk FM — in-game bridge between RadioExt and your Spotify account
 --
 -- How it works:
---   * RadioExt shows a station called "Spotify FM" (folder radios/Spotify FM).
+--   * RadioExt shows a station called "SpotiPunk FM" (folder radios/SpotiPunk FM).
 --     It has no audio files, so tuning in plays nothing from the game itself.
 --   * This mod watches whether that station is playing and what the game is
 --     doing (cutscene, dialogue, holocall, menu, loading ...) and writes the
 --     result to state.json in this folder.
---   * The companion app (companion/spotify_fm.py) reads state.json and plays,
+--   * The companion app (companion/spotipunk_fm.py) reads state.json and plays,
 --     pauses or ducks Spotify to match, and writes now_playing.json back so the
 --     in-game radio popup shows the real track name.
 --
@@ -19,7 +19,7 @@
 
 local GameUI = require("modules/GameUI")
 
-local VERSION = "1.0.2"
+local VERSION = "1.0.3"
 local STATE_FILE = "state.json"
 local NOW_PLAYING_FILE = "now_playing.json"
 local SETTINGS_FILE = "settings.json"
@@ -41,7 +41,7 @@ local DEBOUNCE = {
 }
 
 local defaultSettings = {
-    stationFolder = "Spotify FM",   -- folder name inside radioExt/radios
+    stationFolder = "SpotiPunk FM",   -- folder name inside radioExt/radios
     pauseInScenes = true,           -- cutscenes and locked dialogue (scene tier 3+)
     duckInDialogue = true,          -- walk-and-talk dialogue, dialogue choices on screen
     duckOnCalls = true,             -- holocalls
@@ -89,7 +89,7 @@ local rt = {
 --------------------------------------------------------------------------------
 
 local function log(msg)
-    print("[SpotifyFM] " .. tostring(msg))
+    print("[SpotiPunkFM] " .. tostring(msg))
 end
 
 local function readFile(path)
@@ -221,7 +221,7 @@ local function blackboardField(defName, fieldName, localInstancedFor)
 end
 
 --------------------------------------------------------------------------------
--- Finding the Spotify FM station inside RadioExt
+-- Finding the SpotiPunk FM station inside RadioExt
 --------------------------------------------------------------------------------
 
 local function findStation()
@@ -417,14 +417,14 @@ local function updateStationLabel()
 
     local label
     if not companionOnline() then
-        label = "Start the Spotify FM companion app"
+        label = "Start the SpotiPunk FM companion app"
     elseif rt.np.track and rt.np.track ~= "" then
         label = rt.np.track
         if rt.np.artist and rt.np.artist ~= "" then label = label .. " - " .. rt.np.artist end
     elseif rt.np.error and rt.np.error ~= "" then
         label = rt.np.error
     else
-        label = "Spotify FM"
+        label = "SpotiPunk FM"
     end
     label = label:gsub("\\", "/"):gsub("[\r\n]", " ")
     if #label > 90 then label = label:sub(1, 87) .. "..." end
@@ -445,7 +445,7 @@ end
 --------------------------------------------------------------------------------
 
 local function drawOverlay()
-    if not ImGui.Begin("Spotify FM", ImGuiWindowFlags.AlwaysAutoResize) then
+    if not ImGui.Begin("SpotiPunk FM", ImGuiWindowFlags.AlwaysAutoResize) then
         ImGui.End()
         return
     end
@@ -501,7 +501,7 @@ local function drawOverlay()
         local shuffle, pressed = ImGui.Checkbox("Shuffle", np.shuffle == true)
         if pressed then sendCommand("set_shuffle", shuffle) end
     else
-        ImGui.TextWrapped("Companion: not running.\nStart run_companion.bat in the spotifyFM\\companion folder.")
+        ImGui.TextWrapped("Companion: not running.\nStart run_companion.bat in the spotipunkFM\\companion folder.")
     end
 
     ImGui.Separator()
@@ -533,8 +533,8 @@ end
 -- Events
 --------------------------------------------------------------------------------
 
-registerHotkey("spotifyfm_next", "Spotify FM: next track", function() sendCommand("next") end)
-registerHotkey("spotifyfm_previous", "Spotify FM: previous track", function() sendCommand("previous") end)
+registerHotkey("spotipunkfm_next", "SpotiPunk FM: next track", function() sendCommand("next") end)
+registerHotkey("spotipunkfm_previous", "SpotiPunk FM: previous track", function() sendCommand("previous") end)
 
 registerForEvent("onInit", function()
     loadSettings()

@@ -1,2 +1,1 @@
-Each test takes the path to `spotify_fm.py` (and, for browser tests, a Chromium/Chrome binary) as arguments,
-so they always test the file you pass rather than an installed copy. See CLAUDE.md > Tests.
+Each test takes the path to `spotipunk_fm.py` (`test_launcher.py`: `start_with_game.pyw`; browser tests: also a Chromium/Chrome binary) as arguments, so they always test the file you pass rather than an installed copy. See CONTRIBUTING.md > Tests.

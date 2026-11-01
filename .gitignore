@@ -9,3 +9,6 @@ db.sqlite3
 .venv/
 .player-profile/
 __pycache__/
+
+# private developer notes (kept local)
+CLAUDE.md
