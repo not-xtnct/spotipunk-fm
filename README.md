@@ -6,6 +6,8 @@ Tune in to **107.7 SpotiPunk FM** in any car or on the pocket radio, and your ow
 
 > **Unofficial fan mod.** Not affiliated with, endorsed by or sponsored by Spotify AB or CD PROJEKT RED. "Spotify" is a trademark of Spotify AB, "Cyberpunk 2077" of CD PROJEKT S.A. It uses Spotify's public Web API and Web Playback SDK with **your own** Spotify developer app and **Premium** account. Nothing is streamed anywhere but your own PC.
 
+> 🆕 **New to modding? Follow the step-by-step [first-time setup guide](SETUP.md).** It takes about 20–30 minutes, and you don't need any coding knowledge.
+
 ## What you need
 
 - Cyberpunk 2077 **2.5** on PC
@@ -21,7 +23,7 @@ Tune in to **107.7 SpotiPunk FM** in any car or on the pocket radio, and your ow
 3. Create a free Spotify developer app (about 3 minutes), then double-click `spotipunkFM\companion\run_companion.bat` once to log in and pick a playlist.
 4. Optional but nice: double-click `steam_launch_option.bat` and paste the line it copies into Steam → Cyberpunk 2077 → Properties → Launch options. After that the companion starts and stops with the game by itself.
 
-Full step-by-step guide, settings and troubleshooting: **[package/README.md](package/README.md)**.
+Beginner-friendly walkthrough with every click and common issues: **[SETUP.md](SETUP.md)**. Settings reference and more troubleshooting: [package/README.md](package/README.md).
 
 ## How it works
 

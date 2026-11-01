@@ -43,6 +43,8 @@ The music comes from the companion's **built-in player**, not the game engine. T
 
 Local music stations are ordinary RadioExt stations. They play inside the game and use the game's volume slider.
 
+> **First time?** The step-by-step guide with every click and common issues is `SETUP.md` in the download, or online at https://github.com/not-xtnct/spotipunk-fm/blob/main/SETUP.md
+
 ## Requirements
 
 - Cyberpunk 2077 **2.5** on PC (this cannot work on consoles)
@@ -141,6 +143,8 @@ Song titles in game come from the file names, so `Artist - Title.mp3` naming loo
 Run `run_companion.bat --setup` to change Client ID, log in again, or pick a different playlist.
 
 ## Troubleshooting
+
+- **Audio choppy, cutting out or silent the first time:** normal on the first run or two, while the built-in player sets itself up. Close the game and the companion (or restart the PC) and start again. That almost always fixes it.
 
 - **Station not in the list:** RadioExt isn't loaded. Check the CET console for `[RadioExt]` errors and update RadioExt / RED4ext for 2.5. The console also shows `Station "107.7 SpotiPunk FM" is not a stream and has no song files`. That warning is expected, because the station deliberately has no audio.
 - **Overlay says "Companion: not running":** start `run_companion.bat`.
