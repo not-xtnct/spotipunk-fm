@@ -12,6 +12,9 @@ local G = {
     detached = false, loading = false, menu = false, scene = false,
     tier = 1, combat = 0, callPhase = 0, hubs = {}, mounted = false, vehRadio = true,
     callThrows = false,
+    settingsReady = false,                                   -- settings system not up yet at load
+    audio = { MasterVolume = 60, CarRadioVolume = 20, RadioportVolume = 50 }, -- owner's real values
+    settingsNameErrors = 0,
 }
 local gameUI = {
     Observe = function() end,
@@ -72,7 +75,22 @@ local bbs = {
     [defsT.UIInteractions] = obj({ GetVariant = function(_, k) guard(k); return obj({ __v = { choiceHubs = G.hubs } }) end }),
 }
 function FromVariant(v) guard(v); return v.__v end
+-- Settings system: group/var names must be strings (CET converts them to CName).
+local function settingsName(...)
+    for i = 1, select("#", ...) do
+        if type(select(i, ...)) ~= "string" then G.settingsNameErrors = G.settingsNameErrors + 1 end
+    end
+end
+local settingsSystem = obj({
+    HasVar = function(_, group, name) settingsName(group, name); return group == "/audio/volume" and G.audio[name] ~= nil end,
+    GetVar = function(_, group, name)
+        settingsName(group, name)
+        if group ~= "/audio/volume" or G.audio[name] == nil then return nil end
+        return obj({ GetValue = function() return G.audio[name] end })
+    end,
+})
 Game = {
+    GetSettingsSystem = function() if G.settingsReady then return settingsSystem end return nil end,
     GetPlayer = function() return player end,
     GetBlackboardSystem = function() return obj({
         GetLocalInstanced = function(_, id, d) guard(id, d); return psm end,
@@ -125,11 +143,25 @@ check(hotkeys.spotifyfm_next and hotkeys.spotifyfm_previous, "hotkeys registered
 events.onInit()
 
 expect("off", "station not found", "no RadioExt yet")
+check(readState().volume == nil, "no volume field while the settings system isn't ready")
+G.settingsReady = true
 radioExtLoaded = true
 expect("off", "not tuned", "station found, not tuned")
 
 station.channels[-1] = true
 expect("play", "", "tuned in, free roam")
+
+-- Game volume sliders: Master x Radioport on foot, Master x Car radio in a car
+check(readState().volume == 0.3, "on foot: 60% master x 50% radioport = 0.3, got " .. tostring(readState().volume))
+G.mounted = true; step(1.0)
+check(readState().volume == 0.12, "in car: 60% master x 20% car radio = 0.12, got " .. tostring(readState().volume))
+G.audio.CarRadioVolume = 40; step(0.6)
+check(readState().volume == 0.24, "car radio slider change sent within 0.6 s, got " .. tostring(readState().volume))
+G.audio.MasterVolume = 100; G.audio.CarRadioVolume = 100; step(0.6)
+check(readState().volume == 1, "full sliders = 1.0, got " .. tostring(readState().volume))
+G.mounted = false; G.audio.MasterVolume = 60; G.audio.CarRadioVolume = 20; step(1.0)
+check(readState().volume == 0.3 and readState().mode == "play", "back on foot")
+check(G.settingsNameErrors == 0, "settings group/var names passed as strings")
 
 -- debounce: a 0.2s flicker into a scene must not change the mode
 G.tier = 3; events.onUpdate(0.2); G.tier = 1; step(1.0)
@@ -204,10 +236,11 @@ check(ok, "overlay draws while connected: " .. tostring(err))
 check((imguiCalls.BeginCombo or 0) >= 1, "playlist combo drawn")
 
 -- Settings persist
-local f = io.open("settings.json", "w"); f:write('{"pauseInCombat": true, "duckVolume": 0.5, "bogus": 1}'); f:close()
+local f = io.open("settings.json", "w"); f:write('{"pauseInCombat": true, "duckVolume": 0.5, "followGameVolume": false, "bogus": 1}'); f:close()
 events.onInit()
 G.combat = 1; expect("pause", "combat", "pauseInCombat setting loaded")
 check(readState().duckVolume == 0.5, "duckVolume setting loaded")
+check(readState().volume == nil, "followGameVolume=false: no volume field sent")
 
 -- The 2.5 crash scenario: a blackboard field is missing (nil). Must not reach native code.
 defsT.UI_ComDevice = obj({})          -- PhoneCallInformation gone
@@ -217,6 +250,12 @@ settings_reload = io.open("settings.json", "w"); settings_reload:write("{}"); se
 events.onInit()
 local before = NATIVE_CALLS_WITH_NIL
 expect("play", "", "missing blackboard fields: still plays")
+check(readState().volume == 0.3, "followGameVolume back on by default")
+-- Volume vars gone (a future patch renames them): detection switches off, music keeps playing
+G.audio = {}
+expect("play", "", "volume vars missing: still plays")
+step(1.0)
+check(readState().volume == 0.3, "last known volume kept after volume vars disappear")
 check(NATIVE_CALLS_WITH_NIL == 0, "no nil/non-native value ever passed to a native call (" .. NATIVE_CALLS_WITH_NIL .. ")")
 check(TRACE and TRACE:find("call check: first run") and TRACE:find("dialogue check: survived first run"), "trace breadcrumbs written")
 

@@ -227,6 +227,143 @@ clock.t += 6
 game("play", sess=333)
 check(S["player"]["is_playing"] and bridge.retry_at is None, "retry succeeds once allowed")
 
+# ---------------------------------------------------------------- network failures (v1.1.6 regression)
+# v1.1.5 died in game when a reply timed out: urllib only wraps connection-setup
+# errors in URLError, so TimeoutError / RemoteDisconnected escaped the main loop.
+import socket as _socket
+import urllib.error as _uerr
+
+def raises(fn):
+    try:
+        fn()
+    except Exception as e:
+        return e
+    return None
+
+# a server that accepts the connection and hangs up without answering -> real RemoteDisconnected
+dead = _socket.socket()
+dead.bind(("127.0.0.1", 0))
+dead.listen(8)
+def hang_up():
+    while True:
+        try:
+            c, _ = dead.accept()
+        except OSError:
+            return
+        try:
+            c.recv(65536)
+        except OSError:
+            pass
+        c.close()
+threading.Thread(target=hang_up, daemon=True).start()
+sp_dead = fm.Spotify(cfg["client_id"], 8898, tokens_path=tokens,
+                     api_url="http://127.0.0.1:%d/v1" % dead.getsockname()[1], accounts_url=base)
+sp_dead.tokens.update(access_token="AT1", expires_at=clock.t + 10 ** 9)
+e = raises(lambda: sp_dead.request("GET", "/me/player"))
+check(isinstance(e, fm.SpotifyError) and e.status == 0 and "network error" in e.message,
+      "dropped connection becomes SpotifyError (got %r)" % (e,))
+
+real_urlopen = fm.urllib.request.urlopen
+def failing(exc):
+    def urlopen(*a, **k):
+        raise exc
+    return urlopen
+
+fm.urllib.request.urlopen = failing(TimeoutError("timed out"))
+e = raises(lambda: sp.request("GET", "/me/player"))
+check(isinstance(e, fm.SpotifyError) and "timed out" in e.message, "read timeout becomes SpotifyError (got %r)" % (e,))
+sp.tokens["expires_at"] = 0
+fm.urllib.request.urlopen = failing(_uerr.URLError("no internet"))
+e = raises(sp.access_token)
+check(isinstance(e, fm.SpotifyError) and "network error" in e.message, "token refresh offline becomes SpotifyError (got %r)" % (e,))
+
+# the bridge rides out a timeout during play and recovers when the network is back
+S["player"]["is_playing"] = False
+bridge.mode = "off"
+fm.urllib.request.urlopen = failing(TimeoutError("timed out"))
+e = raises(lambda: game("play", sess=333))
+check(e is None, "tick survives a Spotify timeout (got %r)" % (e,))
+check("network error" in bridge.error and bridge.retry_at is not None, "timeout reported and retry scheduled: " + bridge.error)
+fm.urllib.request.urlopen = real_urlopen
+clock.t += 6
+game("play", sess=333)
+check(S["player"]["is_playing"], "playback recovers once the network is back")
+
+# run(): an unexpected bug in one tick is logged with its traceback and the loop keeps going
+ticks = []
+def flaky_tick():
+    ticks.append(1)
+    if len(ticks) == 1:
+        raise ValueError("boom in tick")
+    if len(ticks) == 3:
+        raise KeyboardInterrupt
+bridge.tick = flaky_tick
+e = raises(bridge.run)
+del bridge.tick
+logtext = fm.LOG_PATH.read_text(encoding="utf-8")
+check(e is None and len(ticks) == 3, "run loop continued after an unexpected error (ticks=%d, %r)" % (len(ticks), e))
+check("Unexpected error, still running: ValueError: boom in tick" in logtext and "Traceback" in logtext,
+      "unexpected error and traceback written to companion.log")
+
+# ---------------------------------------------------------------- game volume sliders (v1.1.7)
+# The built-in player plays outside the game's mixer, so the companion scales it by
+# the volume the CET mod reads from Master x Car radio / Radioport.
+class StubPlayer:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.ready, self.device_id, self.error = True, "sdk1", ""
+        self.targets = []
+    def running(self): return True
+    def start(self): pass
+    def maintain(self): pass
+    def shutdown(self): pass
+    def set_volume(self, v): self.targets.append(round(v, 4))
+    @property
+    def target(self): return self.targets[-1] if self.targets else None
+
+S["devices"].append({"id": "sdk1", "name": "Spotify FM (Cyberpunk 2077)", "type": "Computer",
+                     "is_active": False, "is_restricted": False})
+stub = StubPlayer()
+cfg_b = dict(cfg, player="browser", player_volume=0.8)
+bridge = fm.Bridge(cfg_b, sp, mod_dir, mixer=mixer, clock=clock, sleep=clock.sleep, player=stub)
+
+def game_v(mode, volume=None, reason="", sess=444):
+    st = {"v": 1, "session": sess, "ts": int(clock.t), "hb": 1, "mode": mode, "reason": reason,
+          "duckVolume": 0.3, "commands": []}
+    if volume is not None:
+        st["volume"] = volume
+    (mod_dir / "state.json").write_text(json.dumps(st))
+    os.utime(mod_dir / "state.json", (clock.t,) * 2)
+    bridge.tick()
+    clock.t += 0.5
+
+def near(a, b): return a is not None and abs(a - b) < 1e-3
+
+game_v("off", 0.12)
+game_v("play", 0.12)
+check(near(stub.target, 0.096), "tune in at car radio 20%% x master 60%%: 0.8 x 0.12 = 0.096 (got %s)" % stub.target)
+game_v("play", 0.24)
+check(near(stub.target, 0.192), "slider moved while playing applies at once (got %s)" % stub.target)
+game_v("duck", 0.24, "holocall")
+check(near(stub.target, 0.192 * 0.3), "holocall ducks relative to game volume (got %s)" % stub.target)
+game_v("duck", 0.12, "holocall")
+check(near(stub.target, 0.096 * 0.3), "slider moved while ducked keeps ducking (got %s)" % stub.target)
+game_v("play", 0.12)
+check(near(stub.target, 0.096), "call over: back to game volume, not 0.8 (got %s)" % stub.target)
+game_v("play", 0.0)
+check(near(stub.target, 0.0), "slider at 0 mutes Spotify FM (got %s)" % stub.target)
+game_v("off", 0.0, "not tuned")
+n_targets = len(stub.targets)
+game_v("off", 0.5, "not tuned")
+check(len(stub.targets) == n_targets, "slider moved while station is off: nothing played")
+game_v("play", 0.5)
+check(near(stub.target, 0.4), "next tune-in uses the latest slider value (got %s)" % stub.target)
+game_v("play")  # older CET mod / followGameVolume off: no volume field
+check(near(stub.target, 0.8), "no volume field = old behaviour, 0.8 (got %s)" % stub.target)
+for junk in ("loud", True, -3, 7):
+    v = fm.Bridge.parse_game_volume({"volume": junk})
+    check(v == {"loud": 1.0, True: 1.0, -3: 0.0, 7: 1.0}[junk], "junk volume %r handled safely (got %s)" % (junk, v))
+
 # ---------------------------------------------------------------- local folder sync
 src = tmp / "MyMusic"
 (src / "Album A").mkdir(parents=True)

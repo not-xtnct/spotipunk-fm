@@ -34,7 +34,7 @@ Spotify FM companion (Python, runs in a window next to the game) ◄────
 
 The music comes from the companion's **built-in player**, not the game engine. The built-in player is Spotify's official Web Playback SDK running in a hidden Microsoft Edge (or Chrome) window with its own separate profile. Your normal browser is untouched, and **the Spotify app is not needed**. Spotify's streams are DRM-protected, so no mod can feed them into the game's own audio. In practice this means:
 
-- The game's **car radio volume slider does not affect Spotify FM.** Set the level in Spotify or the Windows volume mixer.
+- **Spotify FM follows the game's volume sliders**, the same ones the game's radio uses: **Master × Car radio** in a vehicle, **Master × Radioport** on foot (Settings → Sound, or the volume control in the car radio). The companion copies them over twice a second. At 100% sliders Spotify FM plays at `player_volume` (0.8). Ducking for calls and dialogue applies on top. This works with the built-in player only. In app mode, set the level in Spotify or the Windows volume mixer.
 - There's no in-car muffling when you look out of the window. The music is the same on foot and in the car.
 - The hidden player starts with the companion (a small window flashes for a second, then hides) and closes when you close the companion. Start the companion before the game. In Spotify it shows up as the device "Spotify FM (Cyberpunk 2077)".
 - Prefer the Spotify app? Set `"player": "app"` in `companion\config.json`. The companion then controls the Spotify app instead, and starts it if needed.
@@ -106,7 +106,8 @@ Song titles in game come from the file names, so `Artist - Title.mp3` naming loo
 | Pause in combat | off (vanilla radio keeps playing in combat) |
 | Stop when a quest turns the car radio off | on |
 | Show radio popup on track change | on |
-| Ducked volume | 0.30 |
+| Ducked volume | 0.30 (a share of the current volume) |
+| Follow the game's radio volume sliders | on |
 
 **Companion (`companion\config.json`)**:
 
@@ -116,7 +117,7 @@ Song titles in game come from the file names, so `Artist - Title.mp3` naming loo
 | `shuffle` | Start at a random track and shuffle |
 | `resume_where_left_off` | `true`: re-tuning continues the playlist. `false`: start fresh each time |
 | `player` | `"browser"` (default): built-in hidden player, no Spotify app needed. `"app"`: control the Spotify app |
-| `player_volume` | Built-in player volume, 0.0 to 1.0 (default 0.8) |
+| `player_volume` | Built-in player volume at 100% game sliders, 0.0 to 1.0 (default 0.8). The game's sliders scale it down from there |
 | `show_player_window` | `true` shows the hidden player window, for troubleshooting |
 | `browser_path` | Leave empty to find Edge or Chrome automatically |
 | `device_name` | App mode only: leave empty for this PC's Spotify app, or name another Spotify device |

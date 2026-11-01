@@ -19,7 +19,7 @@
 
 local GameUI = require("modules/GameUI")
 
-local VERSION = "1.0.1"
+local VERSION = "1.0.2"
 local STATE_FILE = "state.json"
 local NOW_PLAYING_FILE = "now_playing.json"
 local SETTINGS_FILE = "settings.json"
@@ -28,6 +28,8 @@ local EVAL_INTERVAL = 0.2      -- seconds between game-state checks
 local HEARTBEAT_INTERVAL = 1.0 -- state.json is rewritten at least this often
 local READ_INTERVAL = 1.0      -- now_playing.json is read this often
 local COMPANION_TIMEOUT = 10   -- seconds without an update before we call it offline
+local VOLUME_INTERVAL = 0.5    -- seconds between reads of the game's volume sliders
+local AUDIO_GROUP = "/audio/volume"
 
 -- How long a new mode must hold before it is sent, so short flickers
 -- (entering a car, a one-frame scene change) don't pause and resume Spotify.
@@ -47,6 +49,7 @@ local defaultSettings = {
     respectVehicleRadioState = true,-- stop when a quest switches the car radio off
     duckVolume = 0.30,              -- volume while ducked (0.0 - 1.0)
     showNowPlayingPopup = true,     -- show the radio popup when the track changes
+    followGameVolume = true,        -- scale Spotify by Master x Car radio / Radioport volume
 }
 
 local settings = {}
@@ -72,7 +75,10 @@ local rt = {
     np = nil,
     npRaw = nil,
     lastLabel = nil,
-    probesEnabled = { call = true, dialogue = true, combat = true, vehicle = true, tier = true },
+    probesEnabled = { call = true, dialogue = true, combat = true, vehicle = true, tier = true, volume = true },
+    volume = nil,        -- game radio volume as 0.0 - 1.0 (nil = unknown, companion uses 1.0)
+    volumeSource = nil,  -- "car radio" or "radioport", for the overlay
+    volumeTimer = 99,
     probeErrors = {},
     overlayOpen = false,
     ready = false,
@@ -293,6 +299,38 @@ local function hasDialogueChoices()
     end)
 end
 
+-- The game's volume sliders (Settings > Sound, and the volume control in the
+-- car radio). Spotify plays outside the game's mixer, so we scale it ourselves
+-- the same way RadioExt scales its stations: Master x Car radio (when in a
+-- vehicle) or Master x Radioport (on foot). All are ints 0-100 in 2.5
+-- (r6/config/settings/options.json). Group and var names go in as strings,
+-- which CET converts to CName (RadioExt reads the same vars this way).
+-- Returns volume 0.0-1.0 and its source, or nil when not known yet.
+local function readGameVolume()
+    local volume, source
+    probe("volume", function()
+        local ss = Game.GetSettingsSystem()
+        if not isNative(ss) then return false end -- not ready yet; try again later
+        local function get(name)
+            if not ss:HasVar(AUDIO_GROUP, name) then return nil end
+            local var = ss:GetVar(AUDIO_GROUP, name)
+            if not isNative(var) then return nil end
+            local v = var:GetValue()
+            if type(v) ~= "number" or v ~= v then return nil end
+            return math.max(0, math.min(100, v))
+        end
+        local master = get("MasterVolume")
+        local player = Game.GetPlayer()
+        local inCar = isNative(player) and isNative(GetMountedVehicle(player))
+        local radio = get(inCar and "CarRadioVolume" or "RadioportVolume")
+        if master == nil and radio == nil then return NOT_AVAILABLE end
+        volume = (master or 100) / 100 * (radio or 100) / 100
+        source = inCar and "car radio" or "radioport"
+        return true
+    end)
+    return volume, source
+end
+
 -- Returns mode ("play" | "duck" | "pause" | "off") and a short reason.
 local function computeMode()
     local r = rt.radio
@@ -354,6 +392,10 @@ local function writeState()
         duckVolume = settings.duckVolume,
         commands = rt.commands,
     }
+    -- Optional field: an older companion ignores it; a missing value means "full volume".
+    if settings.followGameVolume and rt.volume ~= nil then
+        state.volume = rt.volume
+    end
     writeFile(STATE_FILE, json.encode(state))
 end
 
@@ -416,6 +458,13 @@ local function drawOverlay()
     end
 
     ImGui.Text("Game says: " .. rt.mode .. (rt.reason ~= "" and (" (" .. rt.reason .. ")") or ""))
+    if not settings.followGameVolume then
+        ImGui.Text("Game volume: not followed")
+    elseif rt.volume ~= nil then
+        ImGui.Text(("Game volume: %d%% (master x %s)"):format(math.floor(rt.volume * 100 + 0.5), tostring(rt.volumeSource)))
+    elseif not rt.probesEnabled.volume then
+        ImGui.Text("Game volume: not readable, using full volume")
+    end
 
     if companionOnline() then
         local np = rt.np
@@ -465,6 +514,7 @@ local function drawOverlay()
         v, p = ImGui.Checkbox("Pause in combat", settings.pauseInCombat); if p then settings.pauseInCombat = v changed = true end
         v, p = ImGui.Checkbox("Stop when a quest turns the car radio off", settings.respectVehicleRadioState); if p then settings.respectVehicleRadioState = v changed = true end
         v, p = ImGui.Checkbox("Show radio popup on track change", settings.showNowPlayingPopup); if p then settings.showNowPlayingPopup = v changed = true end
+        v, p = ImGui.Checkbox("Follow the game's radio volume sliders", settings.followGameVolume); if p then settings.followGameVolume = v changed = true end
         v, p = ImGui.SliderFloat("Ducked volume", settings.duckVolume, 0.0, 1.0, "%.2f"); if p then settings.duckVolume = v changed = true end
         if changed then saveSettings() end
 
@@ -548,6 +598,19 @@ registerForEvent("onUpdate", function(delta)
                 rt.pendingMode = nil
                 rt.forceWrite = true
             end
+        end
+    end
+
+    rt.volumeTimer = rt.volumeTimer + delta
+    if rt.volumeTimer >= VOLUME_INTERVAL then
+        rt.volumeTimer = 0
+        local v, source = readGameVolume()
+        if v ~= nil then
+            v = math.floor(v * 1000 + 0.5) / 1000
+            if rt.volume == nil or math.abs(v - rt.volume) >= 0.005 then
+                rt.forceWrite = true
+            end
+            rt.volume, rt.volumeSource = v, source
         end
     end
 

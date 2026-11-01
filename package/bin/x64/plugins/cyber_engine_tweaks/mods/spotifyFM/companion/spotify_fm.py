@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import http.server
 import json
 import os
@@ -42,13 +43,14 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.1.5"
+VERSION = "1.1.7"
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
@@ -91,7 +93,8 @@ DEFAULT_CONFIG = {
     # "browser": built-in hidden player, no Spotify app needed (default)
     # "app": control the Spotify desktop app (or another device) instead
     "player": "browser",
-    "player_volume": 0.8,          # built-in player's volume (0.0 - 1.0)
+    "player_volume": 0.8,          # built-in player's volume at 100% game volume (0.0 - 1.0);
+                                   # scaled by the game's Master x Car radio / Radioport sliders
     "show_player_window": False,   # True shows the hidden player window (for troubleshooting)
     "browser_path": "",            # leave empty to find Edge or Chrome automatically
     "device_name": "",
@@ -170,6 +173,13 @@ class SpotifyError(Exception):
         self.status = status
         self.message = message
         self.reason = reason
+
+
+# urllib wraps only connection-setup failures in URLError. A timeout or a dropped
+# connection while waiting for the reply comes through raw (TimeoutError,
+# RemoteDisconnected, ConnectionResetError, IncompleteRead). v1.1.5 let one of
+# those end the companion in the middle of a game session.
+NETWORK_ERRORS = (OSError, http.client.HTTPException)
 
 
 class Spotify:
@@ -268,6 +278,14 @@ class Spotify:
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")
             raise SpotifyError(e.code, f"token request failed: {detail}")
+        except urllib.error.URLError as e:
+            raise SpotifyError(0, f"network error during login refresh: {e.reason}")
+        except NETWORK_ERRORS as e:
+            raise SpotifyError(0, f"network error during login refresh: {e!r}")
+        except ValueError:
+            raise SpotifyError(0, "token request failed: Spotify sent an unreadable reply")
+        if not isinstance(tok, dict) or not tok.get("access_token"):
+            raise SpotifyError(0, "token request failed: no access token in Spotify's reply")
         self.tokens["access_token"] = tok["access_token"]
         self.tokens["expires_at"] = time.time() + int(tok.get("expires_in", 3600)) - 60
         if tok.get("refresh_token"):
@@ -340,6 +358,8 @@ class Spotify:
             raise SpotifyError(e.code, message, reason)
         except urllib.error.URLError as e:
             raise SpotifyError(0, f"network error: {e.reason}")
+        except NETWORK_ERRORS as e:
+            raise SpotifyError(0, f"network error: {e!r}")
 
     # --- endpoints ----------------------------------------------------------
 
@@ -1080,6 +1100,8 @@ class Bridge:
         self.game_running = False
         self.we_control = False      # True once we started/resumed playback for the station
         self.ducked = False
+        self.duck_level = 1.0        # factor applied while ducked
+        self.game_volume = 1.0       # game's radio volume from state.json (built-in player only)
         self.base_level: float | None = None   # mixer level before ducking
         self.base_percent: int | None = None   # Web API volume before ducking (fallback)
         self.retry_at: float | None = None
@@ -1108,6 +1130,21 @@ class Bridge:
         if msg != self.error and msg:
             log("Problem: " + msg)
         self.error = msg
+
+    def unexpected_error(self, e: Exception) -> None:
+        """Log a bug's traceback to companion.log (the console may be closed by
+        the time anyone looks) and carry on. Repeats are logged once a minute."""
+        key = f"{type(e).__name__}: {e}"
+        now = self.clock()
+        seen = getattr(self, "_unexpected", {})
+        self._unexpected = seen
+        count, last = seen.get(key, (0, -1e9))
+        seen[key] = (count + 1, last)
+        if now - last >= 60:
+            more = f" (happened {count + 1} times)" if count else ""
+            log(f"Unexpected error, still running{more}: {key}\n" + traceback.format_exc().rstrip())
+            seen[key] = (0, now)
+        self.set_error(f"internal error: {key}")
 
     def pick_device(self, devices: list) -> dict | None:
         usable = [d for d in devices if not d.get("is_restricted")]
@@ -1261,10 +1298,29 @@ class Bridge:
         return True
 
     def base_volume(self) -> float:
+        """Built-in player volume while playing normally: player_volume x the game's
+        radio volume sliders (sent by the CET mod; 1.0 when an older mod doesn't)."""
         try:
-            return max(0.0, min(1.0, float(self.cfg.get("player_volume", 0.8))))
+            own = max(0.0, min(1.0, float(self.cfg.get("player_volume", 0.8))))
         except (TypeError, ValueError):
-            return 0.8
+            own = 0.8
+        return own * self.game_volume
+
+    @staticmethod
+    def parse_game_volume(state: dict) -> float:
+        v = state.get("volume")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+            return 1.0  # field missing (older CET mod / setting off) or junk: full volume
+        return max(0.0, min(1.0, float(v)))
+
+    def set_game_volume(self, v: float, apply_now: bool = True) -> None:
+        if abs(v - self.game_volume) < 0.004:
+            return
+        log(f"Game radio volume: {round(v * 100)}%")
+        self.game_volume = v
+        # Apply now if music is meant to be audible; otherwise the next play/duck picks it up.
+        if apply_now and self.player and self.mode in ("play", "duck") and self.we_control:
+            self.player.set_volume(self.base_volume() * (self.duck_level if self.ducked else 1.0))
 
     def pause(self) -> None:
         if not self.we_control:
@@ -1282,6 +1338,7 @@ class Bridge:
         if self.ducked:
             return
         if self.player:
+            self.duck_level = level
             self.player.set_volume(self.base_volume() * level)  # the page fades it
             self.ducked = True
             return
@@ -1466,6 +1523,10 @@ class Bridge:
             new_mode = state.get("mode") if state.get("mode") in ("play", "duck", "pause", "off") else "off"
             new_reason = str(state.get("reason") or "")
             duck_level = float(state.get("duckVolume") or 0.3)
+            if self.player:
+                # Same mode: follow the slider now. On a mode change apply() below
+                # picks up the new value through base_volume().
+                self.set_game_volume(self.parse_game_volume(state), apply_now=new_mode == self.mode)
             self.handle_commands(state)
         else:
             if self.game_running:
@@ -1515,6 +1576,9 @@ class Bridge:
                     self.tick()
                 except SpotifyError as e:
                     self.set_error(f"Spotify said: {e.message}")
+                    self.sleep(2)
+                except Exception as e:  # never let one bad tick end the session
+                    self.unexpected_error(e)
                     self.sleep(2)
                 self.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
@@ -1738,3 +1802,6 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         sys.exit(0)
+    except Exception as e:
+        log(f"Companion stopped by an error: {type(e).__name__}: {e}\n" + traceback.format_exc().rstrip())
+        raise
