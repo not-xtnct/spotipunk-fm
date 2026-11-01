@@ -284,6 +284,28 @@ fm.urllib.request.urlopen = failing(TimeoutError("timed out"))
 e = raises(lambda: game("play", sess=333))
 check(e is None, "tick survives a Spotify timeout (got %r)" % (e,))
 check("network error" in bridge.error and bridge.retry_at is not None, "timeout reported and retry scheduled: " + bridge.error)
+
+# v1.1.8: while the network stays down, polls back off instead of retrying every tick
+# (each try can block the loop for API_TIMEOUT seconds)
+attempts = []
+def counting_timeout(req, *a, **k):
+    attempts.append(req.full_url if hasattr(req, "full_url") else str(req))
+    raise TimeoutError("timed out")
+fm.urllib.request.urlopen = counting_timeout
+sp.tokens.update(access_token="AT1", expires_at=clock.t + 10 ** 6)
+bridge.retry_at = None
+bridge.last_player_poll = 0      # both polls due right now
+bridge.last_playlist_poll = 0
+for _ in range(80):  # 20 s of 0.25 s ticks, mode unchanged
+    game("play", sess=333)
+    clock.t += 0.25
+polls = [u for u in attempts if u.split("?")[0].endswith("/me/player")]
+lists = [u for u in attempts if "/me/playlists" in u]
+check(len(polls) == 1, "now-playing poll tried once, then backs off for 30 s (%d tries in 20 s)" % len(polls))
+check(len(lists) == 1, "playlist refresh tried once, then backs off for 60 s (%d tries in 20 s)" % len(lists))
+check(fm.API_TIMEOUT <= 10, "API timeout is short (%ss)" % fm.API_TIMEOUT)
+bridge.retry_at = clock.t  # in real use apply()'s 5 s play retry is still pending (cleared above to count polls)
+
 fm.urllib.request.urlopen = real_urlopen
 clock.t += 6
 game("play", sess=333)

@@ -50,7 +50,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
@@ -110,6 +110,10 @@ STALE_AFTER = 8           # seconds without a game heartbeat before we treat the
 PLAYER_POLL_ACTIVE = 3    # seconds between "what's playing" checks while tuned in
 PLAYER_POLL_IDLE = 15     # ... while the game runs but the station isn't tuned
 PLAYLIST_REFRESH = 600    # seconds between playlist list refreshes
+API_TIMEOUT = 8           # seconds; Spotify normally answers in well under 1 s, and the
+                          # bridge loop waits for each call, so a dead network must fail fast
+POLL_RETRY_AFTER_ERROR = 30     # seconds before re-reading "what's playing" after a failure
+PLAYLIST_RETRY_AFTER_ERROR = 60 # seconds before re-loading playlists after a failure
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +277,7 @@ class Spotify:
         req = urllib.request.Request(f"{self.accounts_url}/api/token", data=data, method="POST",
                                      headers={"Content-Type": "application/x-www-form-urlencoded"})
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as resp:
                 tok = json.loads(resp.read().decode())
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")
@@ -331,7 +335,7 @@ class Spotify:
             "Content-Type": "application/json",
         })
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as resp:
                 raw = resp.read()
                 if resp.status == 204 or not raw:
                     return None
@@ -623,6 +627,30 @@ def kill_profile_processes(profile_dir: Path) -> int:
         except Exception:
             pass
     return len(procs)
+
+
+def install_close_handler(cleanup) -> bool:
+    """Closing the console window with X, logging off or shutting down ends Python
+    without running any finally block, which left the hidden player running.
+    Windows gives a console program about 5 s after these events, so run the
+    cleanup then. Ctrl+C / Ctrl+Break pass through to Python (KeyboardInterrupt)."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    close_events = (2, 5, 6)  # CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT
+
+    def handler(event):
+        if event in close_events:
+            try:
+                cleanup()
+            except Exception:
+                pass
+        return False  # let the next handler / Windows carry on as usual
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)(handler)
+    install_close_handler.keep_alive = callback  # must outlive this call
+    return bool(ctypes.windll.kernel32.SetConsoleCtrlHandler(callback, True))
 
 
 def find_browser(cfg: dict) -> str | None:
@@ -938,6 +966,11 @@ class BrowserPlayer:
             self.ready, self.device_id = False, None
             self.last_seen = 0.0
 
+    def close_now(self) -> None:
+        """Fast cleanup when Windows is closing the console (about 5 s allowed)."""
+        n = kill_profile_processes(PLAYER_PROFILE_DIR)
+        log(f"Window closed: stopped the built-in player ({n} process(es)).")
+
     def shutdown(self) -> None:
         self.stop()
         if self.server:
@@ -1224,6 +1257,8 @@ class Bridge:
             self.last_playlist_poll = self.clock()
         except SpotifyError as e:
             self.set_error(f"couldn't load playlists ({e.message})")
+            # Don't retry every tick: each try can block the loop for API_TIMEOUT.
+            self.last_playlist_poll = self.clock() - PLAYLIST_REFRESH + PLAYLIST_RETRY_AFTER_ERROR
 
     def poll_player(self) -> None:
         try:
@@ -1231,6 +1266,9 @@ class Bridge:
             self.last_player_poll = self.clock()
         except SpotifyError as e:
             self.set_error(f"couldn't read what's playing ({e.message})")
+            # Back off (this is only for the now-playing label); play/pause/duck
+            # commands keep their own 5 s retry in apply().
+            self.last_player_poll = self.clock() + POLL_RETRY_AFTER_ERROR - PLAYER_POLL_ACTIVE
 
     # --- playback actions ----------------------------------------------------
 
@@ -1681,6 +1719,7 @@ def sound_test(cfg: dict, sp: Spotify) -> int:
         return 1
     test_cfg = dict(cfg, show_player_window=True)
     player = BrowserPlayer(test_cfg, sp, int(cfg["redirect_port"]))
+    install_close_handler(player.close_now)
     bridge = Bridge(test_cfg, sp, Path(find_mod_dir(cfg) or HERE), player=player)
     try:
         print("\nStarting the player the same way as during the game:\n"
@@ -1793,6 +1832,7 @@ def main(argv=None) -> int:
                 "Using the Spotify app instead.")
         else:
             player = BrowserPlayer(cfg, sp, int(cfg["redirect_port"]))
+            install_close_handler(player.close_now)
     Bridge(cfg, sp, mod_dir, player=player).run()
     return 0
 
