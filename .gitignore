@@ -1,0 +1,11 @@
+# runtime / personal files - never commit
+tokens.json
+config.json
+settings.json
+state.json
+now_playing.json
+*.log
+db.sqlite3
+.venv/
+.player-profile/
+__pycache__/

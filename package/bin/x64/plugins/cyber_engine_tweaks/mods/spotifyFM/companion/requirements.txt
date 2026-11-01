@@ -1,0 +1,4 @@
+# Optional: smooth volume fades when using the Spotify app (player: "app").
+pycaw>=20240316
+# Needed: lets the companion close leftover player windows safely.
+psutil>=5.9
