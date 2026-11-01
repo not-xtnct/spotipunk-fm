@@ -386,6 +386,79 @@ for junk in ("loud", True, -3, 7):
     v = fm.Bridge.parse_game_volume({"volume": junk})
     check(v == {"loud": 1.0, True: 1.0, -3: 0.0, 7: 1.0}[junk], "junk volume %r handled safely (got %s)" % (junk, v))
 
+# ---------------------------------------------------------------- background mode (v1.1.9)
+class FakeBridge:
+    game_running = False
+proc_state = {"alive": False}
+def make_watch(psutil_ok=True):
+    fb = FakeBridge()
+    w = fm.GameWatch(fb, clock=clock, process_alive=lambda: proc_state["alive"] if psutil_ok else None)
+    return fb, w
+def run_watch(w, seconds, step=0.25):
+    t_end = clock.t + seconds
+    while clock.t < t_end:
+        if w():
+            return True
+        clock.t += step
+    return False
+
+fb, w = make_watch()
+proc_state["alive"] = False
+check(not run_watch(w, 590) and run_watch(w, 20), "game never starts: companion gives up after 10 min")
+fb, w = make_watch()
+proc_state["alive"] = True
+check(not run_watch(w, 30), "game process running (no heartbeat yet): keep running")
+fb.game_running = True
+proc_state["alive"] = True
+check(not run_watch(w, 120), "game running: keep running")
+fb.game_running = False  # long loading screen: heartbeat gone, process still there
+check(not run_watch(w, 60), "loading screen (no heartbeat, process alive): keep running")
+proc_state["alive"] = False  # game closed
+check(not run_watch(w, 15) and run_watch(w, 15), "game closed: exits after ~20 s (%s)" % w.reason)
+fb, w = make_watch(psutil_ok=False)
+fb.game_running = True; run_watch(w, 10); fb.game_running = False
+check(not run_watch(w, 80) and run_watch(w, 15), "no psutil: heartbeat-only, waits 90 s")
+
+# run(stop_check) ends the loop cleanly: pause + close the player
+stub2 = StubPlayer()
+stub2.shutdowns = 0
+def counted_shutdown(): stub2.shutdowns += 1
+stub2.shutdown = counted_shutdown
+b2 = fm.Bridge(cfg_b, sp, mod_dir, mixer=mixer, clock=clock, sleep=clock.sleep, player=stub2)
+calls = {"n": 0}
+def stop_after_3():
+    calls["n"] += 1
+    return calls["n"] >= 3
+stop_after_3.reason = "the game has closed"
+e = raises(lambda: b2.run(stop_check=stop_after_3))
+check(e is None and calls["n"] == 3 and stub2.shutdowns == 1, "run(stop_check) exits cleanly and closes the player")
+check("Stopping: the game has closed." in fm.LOG_PATH.read_text(encoding="utf-8"), "stop reason logged")
+
+# background mode never asks questions: it reports what's missing instead
+real_tokens_path = fm.TOKENS_PATH
+fm.TOKENS_PATH = tmp / "no_tokens.json"
+check(fm.needs_interactive_setup({"client_id": "", "redirect_port": 8898}) == "no Spotify Client ID yet", "setup check: no Client ID")
+check(fm.needs_interactive_setup({"client_id": "c" * 32, "redirect_port": 8898}) == "not logged in to Spotify", "setup check: no login")
+fm.TOKENS_PATH = tokens
+sp.tokens["scope"] = " ".join(fm.SCOPES); sp.tokens["client_id"] = "c" * 32
+fm.write_json_atomic(tokens, sp.tokens)
+check(fm.needs_interactive_setup({"client_id": "c" * 32, "redirect_port": 8898, "playlist_uri": ""}) == "no playlist chosen", "setup check: no playlist")
+check(fm.needs_interactive_setup({"client_id": "c" * 32, "redirect_port": 8898, "playlist_uri": "liked"}) == "", "setup check: ready")
+notes = []
+real_notify, fm.notify_user = fm.notify_user, notes.append
+fm.CONFIG_PATH.write_text(json.dumps({"client_id": "", "mod_dir": str(mod_dir)}))
+import builtins
+real_input = builtins.input
+def no_input(*a): raise AssertionError("background mode asked a question")
+builtins.input = no_input
+result = {}
+e = raises(lambda: result.update(rc=fm.main(["--background"])))
+rc = result.get("rc")
+builtins.input = real_input
+fm.notify_user = real_notify
+check(e is None and rc == 2 and notes and "run_companion.bat" in notes[0], "background without setup: message, exit 2, no questions (%r)" % (e,))
+fm.TOKENS_PATH = real_tokens_path
+
 # ---------------------------------------------------------------- local folder sync
 src = tmp / "MyMusic"
 (src / "Album A").mkdir(parents=True)

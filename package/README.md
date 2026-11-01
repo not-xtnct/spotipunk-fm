@@ -75,8 +75,18 @@ Your login is saved in `companion\tokens.json`, so later runs go straight to the
 
 ## Every time you play
 
+**Easiest: let Steam start it with the game (one-time setup).**
+1. Double-click `steam_launch_option.bat` in the companion folder. It copies one line to the clipboard.
+2. In Steam, right-click Cyberpunk 2077 → **Properties** → **General** → click into **Launch options** → Ctrl+V.
+3. From now on just press Play in Steam. The companion starts hidden (no window), and the game starts a few seconds later. The companion closes itself about 20 seconds after you quit. To turn this off, clear the Launch options box.
+
+This is a normal Steam setting and doesn't change any game files. The game always starts, even if the companion can't (see `launcher.log`). If Spotify needs you to log in again, a "Spotify FM" message box tells you to run `run_companion.bat` once.
+
+**Or by hand:**
 1. Double-click `run_companion.bat` and leave its window open. You don't need to open Spotify.
 2. Start the game. Tune in to **107.7 Spotify FM** in a car or with the pocket radio.
+
+If a companion window is already open when Steam starts the game, the hidden one steps aside.
 
 Open the CET overlay to see the current track, skip tracks, change playlist, toggle shuffle, and change the pause/duck behaviour. Under CET's **Bindings** you can set hotkeys for *Spotify FM: next track* and *previous track*.
 

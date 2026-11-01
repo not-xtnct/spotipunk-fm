@@ -50,7 +50,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-VERSION = "1.1.8"
+VERSION = "1.1.9"
 
 HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "config.json"
@@ -627,6 +627,86 @@ def kill_profile_processes(profile_dir: Path) -> int:
         except Exception:
             pass
     return len(procs)
+
+
+def game_process_alive() -> bool | None:
+    """True/False whether Cyberpunk2077.exe is running; None if psutil is missing."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    for p in psutil.process_iter(["name"]):
+        try:
+            if (p.info.get("name") or "").lower() == "cyberpunk2077.exe":
+                return True
+        except Exception:
+            continue
+    return False
+
+
+class GameWatch:
+    """--background (started with the game by start_with_game.pyw): tells the
+    bridge loop when to exit by itself. The game counts as alive while its
+    heartbeat is fresh OR its process runs, so long loading screens (heartbeat
+    gaps) don't end the session."""
+    CHECK_EVERY = 5          # seconds between process checks
+    GRACE = 20               # seconds without the game before exiting
+    GRACE_NO_PSUTIL = 90     # heartbeat only: must outlast loading-screen gaps
+    NEVER_STARTED = 600      # the game never showed up: give up
+
+    def __init__(self, bridge, clock=time.time, process_alive=game_process_alive):
+        self.bridge, self.clock, self.process_alive = bridge, clock, process_alive
+        self.started = self.last_alive = clock()
+        self.last_check = -1e9
+        self.proc = None
+        self.seen = False
+        self.reason = ""
+
+    def __call__(self) -> bool:
+        now = self.clock()
+        if now - self.last_check >= self.CHECK_EVERY:
+            self.last_check = now
+            try:
+                self.proc = self.process_alive()
+            except Exception:
+                self.proc = None
+        if self.bridge.game_running or self.proc:
+            self.seen, self.last_alive = True, now
+            return False
+        grace = self.GRACE if self.proc is not None else self.GRACE_NO_PSUTIL
+        if self.seen and now - self.last_alive >= grace:
+            self.reason = "the game has closed"
+            return True
+        if not self.seen and now - self.started >= self.NEVER_STARTED:
+            self.reason = "the game didn't start within 10 minutes"
+            return True
+        return False
+
+
+def needs_interactive_setup(cfg: dict) -> str:
+    """Why the companion can't run without asking questions ('' = it can)."""
+    if not cfg.get("client_id"):
+        return "no Spotify Client ID yet"
+    sp = Spotify(cfg["client_id"], int(cfg["redirect_port"]), tokens_path=TOKENS_PATH)
+    if not sp.has_login():
+        return "not logged in to Spotify"
+    if not sp.has_scopes(SCOPES):
+        return "Spotify needs to approve the built-in player once"
+    if not cfg.get("playlist_uri"):
+        return "no playlist chosen"
+    return ""
+
+
+def notify_user(text: str) -> None:
+    """A plain message box (background mode has no console). Not topmost, so it
+    doesn't pull you out of a full-screen game; it's there when you alt-tab."""
+    log("Message for the user: " + text)
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, "Spotify FM", 0x40)  # MB_ICONINFORMATION
+        except Exception:
+            pass
 
 
 def install_close_handler(cleanup) -> bool:
@@ -1594,9 +1674,12 @@ class Bridge:
             if now - self.last_np_write >= 1.0:
                 self.write_now_playing()
 
-    def run(self) -> None:
+    def run(self, stop_check=None) -> None:
+        """Main loop. stop_check (background mode): called every tick; returning
+        True ends the loop cleanly (pause, close the player)."""
         log(f"Spotify FM companion {VERSION} running. Watching {self.state_path}")
-        log("Leave this window open while you play. Press Ctrl+C to quit.")
+        if stop_check is None:
+            log("Leave this window open while you play. Press Ctrl+C to quit.")
         if self.player:
             log("Player: built-in (hidden). The Spotify app is not needed.")
             try:
@@ -1618,6 +1701,9 @@ class Bridge:
                 except Exception as e:  # never let one bad tick end the session
                     self.unexpected_error(e)
                     self.sleep(2)
+                if stop_check is not None and stop_check():
+                    log("Stopping: " + str(getattr(stop_check, "reason", "done")) + ".")
+                    break
                 self.sleep(POLL_INTERVAL)
         except KeyboardInterrupt:
             log("Stopping.")
@@ -1691,7 +1777,11 @@ def setup(cfg: dict, force: bool) -> Spotify:
               "(If Spotify shows an error, open your app at developer.spotify.com/dashboard,\n"
               " go to Settings > Edit, tick \"Web Playback SDK\" under APIs used, save, and run this again.)\n")
         sp.login()
-    me = sp.me() or {}
+    try:
+        me = sp.me() or {}
+    except SpotifyError as e:  # e.g. network not up yet at game start: carry on, the bridge retries
+        log(f"Couldn't check the Spotify account yet ({e.message}); continuing.")
+        me = {}
     product = me.get("product")
     log(f"Spotify account: {me.get('display_name') or me.get('id')} ({product or 'unknown plan'})")
     if product and product != "premium":
@@ -1785,6 +1875,8 @@ def main(argv=None) -> int:
     ap.add_argument("--fm", type=float, help="FM number for --add-folder (sets its place in the list)")
     ap.add_argument("--test-player", action="store_true",
                     help="play your music on the built-in player for a quick sound check (no game needed)")
+    ap.add_argument("--background", action="store_true",
+                    help="no questions, exit by itself after the game closes (used by start_with_game.pyw)")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -1818,6 +1910,15 @@ def main(argv=None) -> int:
         sync_all_local(cfg, mod_dir)
         return 0
 
+    if args.background:
+        log(f"Companion {VERSION} started in the background with the game.")
+        why = needs_interactive_setup(cfg)
+        if why:
+            notify_user(f"Spotify FM can't start by itself yet ({why}).\n\n"
+                        "Double-click run_companion.bat once, finish the setup, then close it. "
+                        "After that it starts with the game again.")
+            return 2
+
     sync_all_local(cfg, mod_dir)
     if args.sync:
         return 0
@@ -1831,9 +1932,16 @@ def main(argv=None) -> int:
             log("Microsoft Edge or Google Chrome wasn't found, so the built-in player can't run. "
                 "Using the Spotify app instead.")
         else:
-            player = BrowserPlayer(cfg, sp, int(cfg["redirect_port"]))
+            try:
+                player = BrowserPlayer(cfg, sp, int(cfg["redirect_port"]))
+            except SystemExit as e:
+                if args.background:  # a companion window is already open: it does the job
+                    log("Another Spotify FM companion is already running; this one exits.")
+                    return 0
+                raise
             install_close_handler(player.close_now)
-    Bridge(cfg, sp, mod_dir, player=player).run()
+    bridge = Bridge(cfg, sp, mod_dir, player=player)
+    bridge.run(stop_check=GameWatch(bridge) if args.background else None)
     return 0
 
 
