@@ -19,7 +19,7 @@
 
 local GameUI = require("modules/GameUI")
 
-local VERSION = "1.0.3"
+local VERSION = "1.0.6"
 local STATE_FILE = "state.json"
 local NOW_PLAYING_FILE = "now_playing.json"
 local SETTINGS_FILE = "settings.json"
@@ -50,6 +50,8 @@ local defaultSettings = {
     duckVolume = 0.30,              -- volume while ducked (0.0 - 1.0)
     showNowPlayingPopup = true,     -- show the radio popup when the track changes
     followGameVolume = true,        -- scale Spotify by Master x Car radio / Radioport volume
+    skipButtons = true,             -- 1/3 or LB/RB in the radio station list skip tracks
+    silenceCarRadio = true,         -- switch off a vanilla station left playing under SpotiPunk FM in a car
 }
 
 local settings = {}
@@ -75,13 +77,30 @@ local rt = {
     np = nil,
     npRaw = nil,
     lastLabel = nil,
-    probesEnabled = { call = true, dialogue = true, combat = true, vehicle = true, tier = true, volume = true },
+    probesEnabled = { call = true, dialogue = true, combat = true, vehicle = true, tier = true, volume = true, vanilla = true },
     volume = nil,        -- game radio volume as 0.0 - 1.0 (nil = unknown, companion uses 1.0)
     volumeSource = nil,  -- "car radio" or "radioport", for the overlay
     volumeTimer = 99,
     probeErrors = {},
     overlayOpen = false,
     ready = false,
+    car = {
+        inCar = false,       -- mounted in a vehicle at the last check
+        tries = 0,           -- switch-off attempts this ride
+        lastTry = nil,       -- os.clock() of the last attempt
+        gaveUp = false,
+        pendingFlagCheck = false,
+        timer = 99,
+        lines = 0,
+    },
+    input = {
+        popupOpen = false,   -- the radio station list (car or pocket radio) is on screen
+        popupTimer = 0,      -- seconds since it opened (safety reset if the close is missed)
+        lines = 0,           -- input log lines written this session
+        hooks = {},          -- hook name -> "ok" or the error text
+        skips = 0,           -- skips sent from game buttons this session
+        lastSkip = nil,      -- os.clock() of the last one
+    },
 }
 
 --------------------------------------------------------------------------------
@@ -441,6 +460,196 @@ local function updateStationLabel()
 end
 
 --------------------------------------------------------------------------------
+-- Skipping tracks with game buttons (1.0.5)
+--
+-- While the radio station list is open (car radio or pocket radio, both use
+-- VehicleRadioPopupGameController) and SpotiPunk FM is the station playing:
+--   previous = 1 (keyboard) / LB (controller)   -> game action "prior_menu"
+--   next     = 3 (keyboard) / RB (controller)   -> game action "next_menu"
+-- Measured in game on 2 Nov 2026 (init.lua 1.0.4 input test): those two actions
+-- fire for 1/3 in the list and never for A/D, which change the radio volume.
+-- The similar popup_prior/popup_next DO fire for A/D, even while steering a
+-- car with the list closed, so they are not used. Nothing happens while the
+-- list is closed: there 1/3 select weapons and LB/RB do other things.
+--------------------------------------------------------------------------------
+
+local INPUT_LOG_LIMIT = 200        -- [input] lines per game session in spotipunkFM.log
+local POPUP_TIMEOUT = 120          -- seconds; forget "list is open" if we never saw it close
+local SKIP_COOLDOWN = 0.25         -- seconds; one press can never skip twice
+local SKIP_ACTIONS = { prior_menu = "previous", next_menu = "next" }
+local LOGGED_ACTIONS = {           -- presses worth a log line while the list is open
+    prior_menu = true, next_menu = true, popup_prior = true, popup_next = true,
+    radio_volume_down = true, radio_volume_up = true,
+}
+
+local function inputLog(msg)
+    local inp = rt.input
+    if inp.lines >= INPUT_LOG_LIMIT then return end
+    inp.lines = inp.lines + 1
+    if inp.lines == INPUT_LOG_LIMIT then msg = msg .. "  (input log limit reached, nothing more this session)" end
+    if spdlog and spdlog.info then pcall(spdlog.info, "[input] " .. msg) end
+end
+
+-- CName -> Lua string. Only real game objects are passed on (rule: isNative).
+local function nameToString(n)
+    if type(n) == "string" then return n end
+    if not isNative(n) then return nil end
+    local ok, s = pcall(function() return n.value end)
+    if ok and type(s) == "string" and s ~= "" then return s end
+    if Game and Game.NameToString then
+        ok, s = pcall(Game.NameToString, n)
+        if ok and type(s) == "string" and s ~= "" then return s end
+    end
+    return nil
+end
+
+local function stationPlaying()
+    local r = rt.radio
+    return r ~= nil and type(r.channels) == "table" and r.channels[-1] == true
+end
+
+local function onPlayerAction(_, action)
+    local inp = rt.input
+    -- OnAction fires for every mouse move; return at once unless the list is open.
+    if not rt.ready or not inp.popupOpen then return end
+    if not isNative(action) then return end
+    local ok, pressed = pcall(function() return action:IsButtonJustPressed() end)
+    if not ok or pressed ~= true then return end
+    local okName, cname = pcall(function() return action:GetName() end)
+    local name = okName and nameToString(cname) or nil
+    if not name or not LOGGED_ACTIONS[name] then return end
+
+    local cmd = SKIP_ACTIONS[name]
+    if not cmd then
+        inputLog("press " .. name)
+        return
+    end
+    if not settings.skipButtons then
+        inputLog("press " .. name .. ": ignored, skip buttons are off")
+    elseif not stationPlaying() then
+        inputLog("press " .. name .. ": ignored, SpotiPunk FM isn't the station playing")
+    elseif os.clock() - (inp.lastSkip or -1e9) < SKIP_COOLDOWN then
+        inputLog("press " .. name .. ": ignored, too soon after the last skip")
+    else
+        inp.lastSkip = os.clock()
+        sendCommand(cmd)
+        inp.skips = (inp.skips or 0) + 1
+        inputLog("press " .. name .. ": sent " .. cmd)
+    end
+end
+
+local function hook(kind, class, method, fn)
+    local key = class .. ":" .. method
+    local register = (kind == "after") and ObserveAfter or Observe
+    if type(register) ~= "function" then
+        rt.input.hooks[key] = "not available"
+        return
+    end
+    local ok, err = pcall(register, class, method, fn)
+    rt.input.hooks[key] = ok and "ok" or tostring(err)
+    if not ok then log("Could not hook " .. key .. ": " .. tostring(err)) end
+end
+
+local function installInputHooks()
+    hook("before", "PlayerPuppet", "OnAction", onPlayerAction)
+    -- RadioExt hooks SetupData too, so it exists in 2.5. Same popup for car and pocket radio.
+    hook("after", "VehicleRadioPopupGameController", "SetupData", function()
+        rt.input.popupOpen, rt.input.popupTimer = true, 0
+        inputLog("radio list opened, SpotiPunk FM " .. (stationPlaying() and "playing" or "not playing"))
+    end)
+    hook("before", "VehicleRadioPopupGameController", "OnClose", function()
+        if rt.input.popupOpen then inputLog("radio list closed") end
+        rt.input.popupOpen = false
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- Silencing the car's own station (1.0.6)
+--
+-- Bug seen 2 Nov 2026: SpotiPunk FM on the pocket radio, get into a car, and a
+-- vanilla station plays quietly underneath. RadioExt hands the station over on
+-- entry by sending the car a "radio off" event, but the game also restores the
+-- car's last vanilla station, and sometimes that happens afterwards. Picking
+-- "no station" and then SpotiPunk FM again fixed it, because RadioExt switches
+-- the car's receiver off properly on a manual pick.
+--
+-- Fix: while in a car with SpotiPunk FM playing, if the car's own receiver is
+-- on, switch it off the way RadioExt does (ToggleRadioReceiver(false)). Never
+-- touches the car radio when any other station is playing. At most
+-- VANILLA_MAX_TRIES per car ride, VANILLA_RETRY seconds apart (rule 2).
+--------------------------------------------------------------------------------
+
+local VANILLA_INTERVAL = 0.5       -- seconds between checks while in a car
+local VANILLA_RETRY = 1.5          -- seconds between two switch-off attempts
+local VANILLA_MAX_TRIES = 3        -- per car ride
+local CAR_LOG_LIMIT = 100          -- [car] lines per game session
+
+local function carLog(msg)
+    local c = rt.car
+    if c.lines >= CAR_LOG_LIMIT then return end
+    c.lines = c.lines + 1
+    if spdlog and spdlog.info then pcall(spdlog.info, "[car] " .. msg) end
+end
+
+-- Puts the car's "radio on" flag back if switching the receiver off cleared
+-- it, so neither RadioExt nor our own "car radio off" rule stops SpotiPunk FM.
+-- RadioExt sets the same flag the same way on entry.
+local function keepCarRadioFlagOn(veh)
+    local defs = GetAllBlackboardDefs()
+    local def = isNative(defs) and defs.Vehicle or nil
+    local field = isNative(def) and def.VehRadioState or nil
+    if not isNative(field) then return end
+    local bb = veh:GetBlackboard()
+    if not isNative(bb) then return end
+    if bb:GetBool(field) == false then
+        bb:SetBool(field, true)
+        carLog("car radio flag was cleared, set it back on")
+    end
+end
+
+local function checkVanillaInCar()
+    local c = rt.car
+    probe("vanilla", function()
+        local player = Game.GetPlayer()
+        if not isNative(player) then return false end
+        local veh = GetMountedVehicle(player)
+        if not isNative(veh) then
+            c.inCar = false
+            return false
+        end
+        local playing = stationPlaying()
+        if not c.inCar then
+            c.inCar, c.tries, c.lastTry, c.gaveUp = true, 0, nil, false
+            local active = veh:IsRadioReceiverActive() == true
+            carLog(("entered a car: SpotiPunk FM %s, car's own radio %s%s"):format(
+                playing and "playing" or "not playing", active and "ON" or "off",
+                active and (" (" .. tostring(nameToString(veh:GetRadioReceiverStationName()) or "?") .. ")") or ""))
+        end
+        if c.pendingFlagCheck then
+            c.pendingFlagCheck = false
+            keepCarRadioFlagOn(veh)
+        end
+        if not settings.silenceCarRadio or not playing or c.gaveUp then return true end
+        if veh:IsRadioReceiverActive() ~= true then return true end
+
+        local now = os.clock()
+        if c.lastTry and now - c.lastTry < VANILLA_RETRY then return true end
+        if c.tries >= VANILLA_MAX_TRIES then
+            c.gaveUp = true
+            carLog("car's own radio is still on after " .. VANILLA_MAX_TRIES .. " tries, giving up for this ride")
+            return true
+        end
+        c.tries, c.lastTry = c.tries + 1, now
+        carLog(("car's own radio (%s) is playing under SpotiPunk FM, switching it off (try %d)"):format(
+            tostring(nameToString(veh:GetRadioReceiverStationName()) or "?"), c.tries))
+        veh:ToggleRadioReceiver(false)
+        keepCarRadioFlagOn(veh)
+        c.pendingFlagCheck = true   -- and again next check, in case the flag clears later
+        return true
+    end)
+end
+
+--------------------------------------------------------------------------------
 -- Overlay (visible while the CET overlay is open)
 --------------------------------------------------------------------------------
 
@@ -515,6 +724,8 @@ local function drawOverlay()
         v, p = ImGui.Checkbox("Stop when a quest turns the car radio off", settings.respectVehicleRadioState); if p then settings.respectVehicleRadioState = v changed = true end
         v, p = ImGui.Checkbox("Show radio popup on track change", settings.showNowPlayingPopup); if p then settings.showNowPlayingPopup = v changed = true end
         v, p = ImGui.Checkbox("Follow the game's radio volume sliders", settings.followGameVolume); if p then settings.followGameVolume = v changed = true end
+        v, p = ImGui.Checkbox("Skip tracks with 1 / 3 (LB / RB) in the radio list", settings.skipButtons); if p then settings.skipButtons = v changed = true end
+        v, p = ImGui.Checkbox("Silence the car's own station under SpotiPunk FM", settings.silenceCarRadio); if p then settings.silenceCarRadio = v changed = true end
         v, p = ImGui.SliderFloat("Ducked volume", settings.duckVolume, 0.0, 1.0, "%.2f"); if p then settings.duckVolume = v changed = true end
         if changed then saveSettings() end
 
@@ -522,6 +733,15 @@ local function drawOverlay()
         for name, enabled in pairs(rt.probesEnabled) do if not enabled then table.insert(off, name) end end
         if #off > 0 then
             ImGui.TextWrapped("Detection switched off after errors: " .. table.concat(off, ", ") .. ". Reload mods to retry.")
+        end
+    end
+
+    if ImGui.CollapsingHeader("Skip buttons") then
+        ImGui.TextWrapped("Open the radio list with SpotiPunk FM playing, then press 1 / 3 (keyboard) or LB / RB (controller).")
+        ImGui.Text("Radio list: " .. (rt.input.popupOpen and "open" or "closed"))
+        ImGui.Text(("Skips this session: %d"):format(rt.input.skips))
+        for key, status in pairs(rt.input.hooks) do
+            ImGui.Text(key .. ": " .. status)
         end
     end
 
@@ -541,6 +761,7 @@ registerForEvent("onInit", function()
     rt.session = os.time()
     -- Starts GameUI's observers; we only use its getters afterwards.
     GameUI.Observe(function() end)
+    installInputHooks()
     rt.ready = true
     writeState()
     log("v" .. VERSION .. " loaded")
@@ -599,6 +820,20 @@ registerForEvent("onUpdate", function(delta)
                 rt.forceWrite = true
             end
         end
+    end
+
+    if rt.input.popupOpen then
+        rt.input.popupTimer = rt.input.popupTimer + delta
+        if rt.input.popupTimer >= POPUP_TIMEOUT or GameUI.IsDetached() then
+            rt.input.popupOpen = false
+            inputLog("radio list assumed closed (no close seen)")
+        end
+    end
+
+    rt.car.timer = rt.car.timer + delta
+    if rt.car.timer >= VANILLA_INTERVAL then
+        rt.car.timer = 0
+        checkVanillaInCar()
     end
 
     rt.volumeTimer = rt.volumeTimer + delta

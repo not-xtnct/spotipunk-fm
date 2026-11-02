@@ -63,6 +63,8 @@ The companion treats the game as closed if `state.json` is more than 8 s old. Th
 7. **Tracebacks must reach `companion.log`.** The console may be gone, and background mode has none.
 8. **The game must always start.** `start_with_game.pyw` uses the stdlib only, never imports the companion, and wraps every companion step.
 9. **Verify deployments** (size/hash) after copying into a game folder. Don't copy `__pycache__/`, which the tests create next to the companion.
+10. **Skip buttons use `prior_menu` / `next_menu`, and only while the radio list is open.** Measured in game: 1/3 and LB/RB fire them, A/D never do. Don't use `popup_prior` / `popup_next`, because A/D fire those too, even while steering with the list closed. The arrow keys steer cars, and every D-pad direction, stick click and bumper is taken during play. The list is `VehicleRadioPopupGameController` (`SetupData` … `OnClose`) for both car and pocket radio. `PlayerPuppet:OnAction` fires for every mouse move, so the observer returns at once unless the list is open.
+11. **The game restores a car's last vanilla station on entry, sometimes seconds after RadioExt has handed SpotiPunk FM over.** `checkVanillaInCar()` switches the car's receiver off (`ToggleRadioReceiver(false)`), only while SpotiPunk FM is playing, max 3 tries per ride. Seen in game twice in 5 entries, fixed by the first try each time.
 
 ## Tests
 

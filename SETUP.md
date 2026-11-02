@@ -114,6 +114,7 @@ The folder `...\spotipunkFM\companion` is called **the companion folder** from h
 1. Start the companion if it isn't running (`run_companion.bat`), then start Cyberpunk 2077.
 2. In a car, open the radio and pick **107.7 SpotiPunk FM**. On foot, use the pocket radio.
 3. Your music starts within a few seconds. The radio popup shows the song and artist.
+4. To skip a song, keep the radio list open and press **3** (keyboard) or **RB** (controller) for the next one, **1** or **LB** for the previous one.
 
 Press your CET overlay key to see the **SpotiPunk FM** window: current track, next/previous, playlist picker, shuffle, and switches for each pause/volume rule.
 

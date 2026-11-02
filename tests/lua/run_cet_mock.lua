@@ -97,12 +97,38 @@ Game = {
         Get = function(_, d) guard(d); return bbs[d] end,
     }) end,
 }
+G.receiver = false; G.receiverToggles = 0      -- the car's own (vanilla) radio receiver
 function GetMountedVehicle()
     if not G.mounted then return nil end
-    return obj({ GetBlackboard = function() return obj({ GetBool = function(_, k) guard(k); return G.vehRadio end }) end })
+    return obj({
+        GetBlackboard = function() return obj({
+            GetBool = function(_, k) guard(k); return G.vehRadio end,
+            SetBool = function(_, k, v) guard(k); G.vehRadio = v end,
+        }) end,
+        IsRadioReceiverActive = function() return G.receiver end,
+        GetRadioReceiverStationName = function() return obj({ value = "Radio Vexelstrom" }) end,
+        ToggleRadioReceiver = function(_, on)
+            if type(on) ~= "boolean" then NATIVE_CALLS_WITH_NIL = NATIVE_CALLS_WITH_NIL + 1 end
+            G.receiverToggles = G.receiverToggles + 1
+            if not G.receiverStuck then G.receiver = on end
+            if G.toggleClearsFlag then G.vehRadio = false end
+        end,
+    })
 end
 function EnumInt(e) guard(e); return e end
 spdlog = { info = function(m) TRACE = (TRACE or "") .. m .. "\n" end }
+
+-- CET Observe / ObserveAfter: record the hook. A method CET can't find raises
+-- an error, like the real thing reporting "function not found".
+local hooks = {}
+HOOK_MISSING = {}
+local function mockObserve(class, method, fn)
+    local key = class .. ":" .. method
+    if HOOK_MISSING[key] then error("function " .. method .. " not found in " .. class) end
+    hooks[key] = fn
+end
+Observe = mockObserve
+ObserveAfter = mockObserve
 
 -- ImGui mock: every call is recorded; returns harmless values
 local imguiCalls = {}
@@ -224,6 +250,181 @@ for _ = 1, 12 do hotkeys.spotipunkfm_previous() end; step(0.1)
 s = readState()
 check(#s.commands == 8 and s.commands[8].seq == 13, "command list capped at 8, newest kept")
 check(type(s.session) == "number" and s.hb > 0, "session + heartbeat present")
+
+-- Skip buttons (1.0.5): 1/3 or LB/RB in the radio list --------------------------
+local CLOCK = 1000
+os.clock = function() return CLOCK end   -- the mod's cooldown clock, driven by the test
+local function since(m) return (TRACE or ""):sub(m + 1) end
+local function mark() return #(TRACE or "") end
+local function action(name, pressed)
+    return obj({
+        GetName = function() return obj({ value = name }) end,
+        IsButtonJustPressed = function() return pressed end,
+    })
+end
+local function lastCmd() local c = readState().commands; return c[#c] end
+local function press(name) onAction = hooks["PlayerPuppet:OnAction"]; onAction(player, action(name, true)); step(0.1); CLOCK = CLOCK + 1 end
+local openList = function() hooks["VehicleRadioPopupGameController:SetupData"](obj()) end
+local closeList = function() hooks["VehicleRadioPopupGameController:OnClose"](obj()) end
+
+onAction = hooks["PlayerPuppet:OnAction"]
+check(type(onAction) == "function", "PlayerPuppet:OnAction observed")
+check(type(hooks["VehicleRadioPopupGameController:SetupData"]) == "function"
+    and type(hooks["VehicleRadioPopupGameController:OnClose"]) == "function", "radio list open/close observed")
+
+-- List closed: nothing, even while tuned (1/3 pick weapons, LB/RB do other things)
+local seq0 = lastCmd().seq
+press("next_menu"); press("prior_menu")
+check(lastCmd().seq == seq0, "list closed: no skip")
+
+-- List open, SpotiPunk FM playing
+local m0 = mark()
+openList()
+press("next_menu")
+check(lastCmd().action == "next" and lastCmd().seq == seq0 + 1, "3 / RB in the list sends next")
+press("prior_menu")
+check(lastCmd().action == "previous" and lastCmd().seq == seq0 + 2, "1 / LB in the list sends previous")
+-- A/D: volume + popup_prior/next, never a skip
+press("popup_prior"); press("radio_volume_down"); press("popup_next"); press("radio_volume_up")
+check(lastCmd().seq == seq0 + 2, "A / D in the list don't skip")
+-- held button / release: not a press
+onAction(player, action("next_menu", false)); step(0.1)
+check(lastCmd().seq == seq0 + 2, "non-press doesn't skip")
+-- same press seen twice within the cooldown
+onAction(player, action("next_menu", true)); onAction(player, action("next_menu", true)); step(0.1)
+check(lastCmd().seq == seq0 + 3, "one press can't skip twice")
+CLOCK = CLOCK + 0.3
+onAction(player, action("next_menu", true)); step(0.1)
+check(lastCmd().seq == seq0 + 4, "next press after the cooldown skips")
+CLOCK = CLOCK + 1
+local out = since(m0)
+check(out:find("radio list opened, SpotiPunk FM playing") and out:find("press next_menu: sent next")
+    and out:find("press prior_menu: sent previous") and out:find("press radio_volume_up")
+    and out:find("too soon after the last skip"), "skip log lines, got: " .. out)
+closeList()
+check(since(m0):find("radio list closed"), "close logged")
+press("next_menu")
+check(lastCmd().seq == seq0 + 4, "closed again: no skip")
+
+-- Another station playing: no skip
+station.channels[-1] = false; step(1.5)
+openList(); press("next_menu"); closeList()
+check(lastCmd().seq == seq0 + 4, "other station playing: no skip")
+station.channels[-1] = true; step(1.5)
+
+-- Junk from the game must never reach a native call or raise
+openList()
+local nilBefore = NATIVE_CALLS_WITH_NIL
+ok, err = pcall(function()
+    onAction(nil, nil)
+    onAction(player, "next_menu")
+    onAction(player, obj({ IsButtonJustPressed = function() return true end, GetName = function() return nil end }))
+    onAction(player, obj({ IsButtonJustPressed = function() return true end, GetName = function() return "next_menu" end }))
+    onAction(player, obj({}))  -- methods missing
+end)
+check(ok, "odd action values don't raise: " .. tostring(err))
+check(NATIVE_CALLS_WITH_NIL == nilBefore, "odd action values never reach a native call")
+step(0.1)
+check(lastCmd().seq == seq0 + 5, "a plain-string name still works once (CET may convert CNames)")
+CLOCK = CLOCK + 1
+
+-- A missed close is forgotten after a while
+m0 = mark()
+step(121)
+check(since(m0):find("radio list assumed closed"), "radio list open state times out")
+press("next_menu")
+check(lastCmd().seq == seq0 + 5, "after the timeout: no skip")
+
+-- Overlay shows the Skip buttons section
+events.onOverlayOpen()
+local headersBefore = imguiCalls.CollapsingHeader or 0
+ok, err = pcall(events.onDraw)
+check(ok, "overlay with Skip buttons draws: " .. tostring(err))
+check((imguiCalls.CollapsingHeader or 0) - headersBefore == 2, "Behaviour + Skip buttons headers drawn")
+events.onOverlayClose()
+
+-- skipButtons=false in settings.json: presses are ignored
+local sf = io.open("settings.json", "w"); sf:write('{"skipButtons": false}'); sf:close()
+events.onInit(); step(1.5)
+openList(); press("next_menu"); closeList()
+check(lastCmd().seq == seq0 + 5, "skipButtons=false: no skip")
+sf = io.open("settings.json", "w"); sf:write("{}"); sf:close()
+events.onInit(); step(1.5)
+
+-- A hook CET can't find doesn't stop the mod
+HOOK_MISSING["VehicleRadioPopupGameController:OnClose"] = true
+ok, err = pcall(events.onInit)
+check(ok, "missing hook doesn't raise: " .. tostring(err))
+expect("play", "", "missing hook: still plays")
+HOOK_MISSING["VehicleRadioPopupGameController:OnClose"] = nil
+events.onInit(); step(1.5)
+
+-- Car's own station under SpotiPunk FM (1.0.6) -----------------------------------
+local function carSince(m) return (TRACE or ""):sub(m + 1) end
+local function settle(s) local t = 0; while t < s do events.onUpdate(0.05); t = t + 0.05; CLOCK = CLOCK + 0.05 end end
+G.mounted = false; settle(1)
+
+-- Entry with the vanilla receiver left on: switched off, music keeps playing
+local cm = mark()
+G.receiver = true; G.receiverToggles = 0
+G.mounted = true; settle(1.5)
+check(G.receiverToggles == 1 and G.receiver == false, "vanilla receiver switched off once, toggles=" .. G.receiverToggles)
+check(carSince(cm):find("entered a car: SpotiPunk FM playing, car's own radio ON %(Radio Vexelstrom%)")
+    and carSince(cm):find("switching it off %(try 1%)"), "car log, got: " .. carSince(cm))
+expect("play", "", "still playing after the switch-off")
+
+-- Switching off clears the car radio flag: it's put back, mode never goes off
+G.mounted = false; settle(1)
+G.receiver = true; G.receiverToggles = 0; G.toggleClearsFlag = true
+G.mounted = true; settle(0.6)
+check(G.vehRadio == true, "car radio flag restored after the switch-off")
+expect("play", "", "flag cleared by the switch-off: still playing")
+G.toggleClearsFlag = false
+
+-- Receiver that won't switch off: at most 3 tries per ride, then gives up
+G.mounted = false; settle(1)
+cm = mark()
+G.receiver = true; G.receiverToggles = 0; G.receiverStuck = true
+G.mounted = true; settle(15)
+check(G.receiverToggles == 3, "3 tries per ride, got " .. G.receiverToggles)
+check(carSince(cm):find("giving up for this ride"), "give-up logged")
+-- a new ride gets new tries
+G.mounted = false; settle(1); G.mounted = true; settle(1)
+check(G.receiverToggles == 4, "new ride, new try, got " .. G.receiverToggles)
+G.receiverStuck = false
+
+-- Another station playing: the car radio is the player's, never touched
+G.mounted = false; settle(1)
+station.channels[-1] = false; settle(1)
+G.receiver = true; G.receiverToggles = 0
+G.mounted = true; settle(3)
+check(G.receiverToggles == 0, "vanilla station picked by the player is left alone")
+station.channels[-1] = true; settle(1.5)
+check(G.receiverToggles == 1, "switching to SpotiPunk FM while in the car silences the leftover")
+
+-- On foot: nothing
+G.mounted = false; G.receiver = true; G.receiverToggles = 0; settle(3)
+check(G.receiverToggles == 0, "on foot: no car radio calls")
+
+-- Setting off
+sf = io.open("settings.json", "w"); sf:write('{"silenceCarRadio": false}'); sf:close()
+events.onInit(); G.mounted = true; settle(3)
+check(G.receiverToggles == 0, "silenceCarRadio=false: no switch-off")
+sf = io.open("settings.json", "w"); sf:write("{}"); sf:close()
+events.onInit(); settle(1.5)
+check(G.receiverToggles == 1, "setting back on: switch-off")
+G.mounted = false; settle(1)
+
+-- Log is capped per session; skipping keeps working after the cap
+openList()
+for _ = 1, 400 do onAction(player, action("radio_volume_up", true)) end
+local n = 0
+for _ in TRACE:gmatch("%[input%]") do n = n + 1 end
+check(n == 200, "input log capped at 200 lines, got " .. n)
+check(TRACE:find("input log limit reached"), "cap is announced in the log")
+press("next_menu")
+check(lastCmd().seq == seq0 + 6, "skips still work after the log cap")
+closeList()
 
 -- Overlay draws in both states ------------------------------------------------------
 events.onOverlayOpen()

@@ -92,7 +92,9 @@ This is a normal Steam setting and doesn't change any game files. The game alway
 
 If a companion window is already open when Steam starts the game, the hidden one steps aside.
 
-Open the CET overlay to see the current track, skip tracks, change playlist, toggle shuffle, and change the pause/duck behaviour. Under CET's **Bindings** you can set hotkeys for *SpotiPunk FM: next track* and *previous track*.
+**Skip tracks in game:** open the radio station list (in a car, or the pocket radio on foot) while SpotiPunk FM is playing, then press **3 / RB** for the next track or **1 / LB** for the previous one. Previous works like Spotify: it restarts the song if it's a few seconds in, and goes back a track otherwise. The buttons only skip while the list is open, so they never get in the way of weapons or driving.
+
+Open the CET overlay to see the current track, skip tracks, change playlist, toggle shuffle, and change the pause/duck behaviour. Under CET's **Bindings** you can also set always-on hotkeys for *SpotiPunk FM: next track* and *previous track* (the game leaves keys such as `[` and `]` free).
 
 ## Local music stations
 
