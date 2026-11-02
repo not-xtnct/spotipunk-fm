@@ -2,7 +2,7 @@
 
 **Your Spotify playlists as a radio station in Cyberpunk 2077 (patch 2.5, PC).**
 
-Tune in to **107.7 SpotiPunk FM** in any car or on the pocket radio, and your own playlist or Liked Songs plays like a vanilla station. Music pauses in cutscenes and menus, gets quieter during dialogue and holocalls, follows the game's car radio / radioport volume sliders, and shows the current track in the radio popup. It can also turn any folder of mp3 / flac / wav / ogg files into an extra station.
+Tune in to **107.7 SpotiPunk FM** in any car or on the pocket radio, and your own playlist or Liked Songs plays like a vanilla station. Music pauses in cutscenes and menus, gets quieter during dialogue and holocalls, follows the game's car radio / radioport volume sliders, and shows the current track in the radio popup. Skip songs with **1 / 3** or **LB / RB** while the radio list is open. It can also turn any folder of mp3 / flac / wav / ogg files into an extra station.
 
 > **Unofficial fan mod.** Not affiliated with, endorsed by or sponsored by Spotify AB or CD PROJEKT RED. "Spotify" is a trademark of Spotify AB, "Cyberpunk 2077" of CD PROJEKT S.A. It uses Spotify's public Web API and Web Playback SDK with **your own** Spotify developer app and **Premium** account. Nothing is streamed anywhere but your own PC.
 
